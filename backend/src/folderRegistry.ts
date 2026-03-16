@@ -1,0 +1,76 @@
+import fs from "node:fs";
+import path from "node:path";
+import crypto from "node:crypto";
+import type { FolderEntry } from "./protocol.js";
+
+const DATA_FILE = path.resolve(
+  import.meta.dirname ?? path.dirname(new URL(import.meta.url).pathname),
+  "../../folders.json"
+);
+
+export class FolderRegistry {
+  private folders: Map<string, FolderEntry> = new Map();
+
+  constructor() {
+    this.load();
+  }
+
+  private load(): void {
+    try {
+      if (fs.existsSync(DATA_FILE)) {
+        const raw = fs.readFileSync(DATA_FILE, "utf-8");
+        const entries: FolderEntry[] = JSON.parse(raw);
+        for (const entry of entries) {
+          this.folders.set(entry.id, entry);
+        }
+      }
+    } catch {
+      // start with empty list on parse error
+    }
+  }
+
+  private save(): void {
+    const entries = Array.from(this.folders.values());
+    fs.writeFileSync(DATA_FILE, JSON.stringify(entries, null, 2), "utf-8");
+  }
+
+  add(folderPath: string): FolderEntry {
+    const resolved = path.resolve(folderPath);
+
+    if (!fs.existsSync(resolved)) {
+      throw new Error(`Path does not exist: ${resolved}`);
+    }
+
+    const stat = fs.statSync(resolved);
+    if (!stat.isDirectory()) {
+      throw new Error(`Path is not a directory: ${resolved}`);
+    }
+
+    for (const entry of this.folders.values()) {
+      if (entry.path === resolved) {
+        throw new Error(`Folder already added: ${resolved}`);
+      }
+    }
+
+    const id = crypto.randomUUID();
+    const label = path.basename(resolved);
+    const entry: FolderEntry = { id, label, path: resolved };
+    this.folders.set(id, entry);
+    this.save();
+    return entry;
+  }
+
+  remove(id: string): boolean {
+    const deleted = this.folders.delete(id);
+    if (deleted) this.save();
+    return deleted;
+  }
+
+  list(): FolderEntry[] {
+    return Array.from(this.folders.values());
+  }
+
+  resolve(id: string): FolderEntry | undefined {
+    return this.folders.get(id);
+  }
+}
