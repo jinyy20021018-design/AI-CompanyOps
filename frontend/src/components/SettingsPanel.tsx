@@ -4,18 +4,20 @@ export type CoordinatorEngine = "claude" | "codex";
 export type CanvasTheme = "dark" | "light";
 
 type Props = {
-  coordinatorEngine: CoordinatorEngine;
   canvasTheme: CanvasTheme;
-  onCoordinatorEngineChange: (engine: CoordinatorEngine) => void;
   onCanvasThemeChange: (theme: CanvasTheme) => void;
+  onCloseWorkers?: () => void;
+  onArrange?: () => void;
+  workerCount?: number;
   onClose: () => void;
 };
 
 export function SettingsPanel({
-  coordinatorEngine,
   canvasTheme,
-  onCoordinatorEngineChange,
   onCanvasThemeChange,
+  onCloseWorkers,
+  onArrange,
+  workerCount = 0,
   onClose,
 }: Props) {
   const panelRef = useRef<HTMLDivElement>(null);
@@ -46,27 +48,8 @@ export function SettingsPanel({
         </div>
 
         <div className="settings-section">
-          <label className="settings-label">Coordinator Engine</label>
-          <p className="settings-desc">Choose which CLI the coordinator terminal runs.</p>
-          <div className="settings-toggle-group">
-            <button
-              className={`settings-toggle-btn${coordinatorEngine === "claude" ? " active" : ""}`}
-              onClick={() => onCoordinatorEngineChange("claude")}
-            >
-              Claude
-            </button>
-            <button
-              className={`settings-toggle-btn${coordinatorEngine === "codex" ? " active" : ""}`}
-              onClick={() => onCoordinatorEngineChange("codex")}
-            >
-              Codex
-            </button>
-          </div>
-        </div>
-
-        <div className="settings-section">
-          <label className="settings-label">Canvas Theme</label>
-          <p className="settings-desc">Switch between dark and light canvas backgrounds.</p>
+          <label className="settings-label">Theme</label>
+          <p className="settings-desc">Switch between dark and light UI.</p>
           <div className="settings-toggle-group">
             <button
               className={`settings-toggle-btn${canvasTheme === "dark" ? " active" : ""}`}
@@ -82,6 +65,24 @@ export function SettingsPanel({
             </button>
           </div>
         </div>
+
+        {(onCloseWorkers || onArrange) && (
+          <div className="settings-section">
+            <label className="settings-label">Actions</label>
+            <div className="settings-actions">
+              {onArrange && (
+                <button className="settings-action-btn" onClick={() => { onArrange(); onClose(); }}>
+                  Arrange terminals
+                </button>
+              )}
+              {onCloseWorkers && workerCount > 0 && (
+                <button className="settings-action-btn settings-action-destructive" onClick={() => { onCloseWorkers(); onClose(); }}>
+                  Close workers ({workerCount})
+                </button>
+              )}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

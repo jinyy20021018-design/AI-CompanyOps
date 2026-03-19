@@ -73,4 +73,14 @@ export class FolderRegistry {
   resolve(id: string): FolderEntry | undefined {
     return this.folders.get(id);
   }
+
+  updatePreset(id: string, preset: { defaultProvider?: "claude" | "codex"; defaultMode?: "quick" | "role"; defaultRole?: string }): FolderEntry | undefined {
+    const entry = this.folders.get(id);
+    if (!entry) return undefined;
+    if (preset.defaultProvider !== undefined) entry.defaultProvider = preset.defaultProvider;
+    if (preset.defaultMode !== undefined) entry.defaultMode = preset.defaultMode;
+    if (preset.defaultRole !== undefined) entry.defaultRole = preset.defaultRole;
+    this.save();
+    return entry;
+  }
 }

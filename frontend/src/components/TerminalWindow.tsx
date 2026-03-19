@@ -1,21 +1,15 @@
 import { useRef, useState, useCallback, type ReactNode } from "react";
+import { MessageBar } from "./MessageBar";
 import type { TerminalWindowModel } from "../types";
 
-const ACCENT_COLORS = [
-  "#7aa2f7",
-  "#9ece6a",
-  "#f7768e",
-  "#e0af68",
-  "#bb9af7",
-  "#2ac3de",
-  "#ff9e64",
-  "#73daca",
-];
-
-function accentFor(id: string) {
-  let hash = 0;
-  for (let i = 0; i < id.length; i++) hash = (hash * 31 + id.charCodeAt(i)) >>> 0;
-  return ACCENT_COLORS[hash % ACCENT_COLORS.length];
+function fileTypeIcon(name: string): string {
+  const ext = name.includes(".") ? name.split(".").pop()!.toLowerCase() : "";
+  const map: Record<string, string> = {
+    ts: "TS", tsx: "TX", js: "JS", jsx: "JX", json: "{}", md: "MD",
+    py: "PY", rs: "RS", go: "GO", sh: "SH", yaml: "YM", yml: "YM",
+    toml: "TM", css: "CS", html: "HT", sql: "SQ", txt: "TX",
+  };
+  return map[ext] ?? (ext.slice(0, 2).toUpperCase() || "F");
 }
 
 type Props = {
@@ -24,9 +18,11 @@ type Props = {
   onResize: (id: string, width: number, height: number) => void;
   onClose: (id: string) => void;
   onFocus: (id: string) => void;
-  onTagChange: (id: string, tag: string) => void;
+  onRename: (id: string, name: string) => void;
   zIndex: number;
   children: ReactNode;
+  onArtifactClick?: (terminalId: string, fileName: string) => void;
+  onPromote?: (terminalId: string) => void;
 };
 
 export function TerminalWindow({
@@ -35,9 +31,11 @@ export function TerminalWindow({
   onResize,
   onClose,
   onFocus,
-  onTagChange,
+  onRename,
   zIndex,
   children,
+  onArtifactClick,
+  onPromote,
 }: Props) {
   const dragState = useRef<{
     startX: number;
@@ -52,10 +50,9 @@ export function TerminalWindow({
     startH: number;
   } | null>(null);
 
-  const [isEditingTag, setIsEditingTag] = useState(false);
-  const [tagInput, setTagInput] = useState(model.tag ?? "");
-
-  const accent = model.tag === "coordinator" ? "#2ac3de" : accentFor(model.pathId);
+  const isCoordinator = model.tag === "coordinator";
+  const [editingName, setEditingName] = useState(false);
+  const [nameInput, setNameInput] = useState(model.title);
 
   const handlePointerDown = useCallback(
     (e: React.PointerEvent) => {
@@ -120,77 +117,74 @@ export function TerminalWindow({
     [model.id, model.width, model.height, onResize, onFocus]
   );
 
-  const handleTagClick = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    setIsEditingTag(true);
-    setTagInput(model.tag ?? "");
-  };
-
-  const commitTag = () => {
-    const trimmed = tagInput.trim();
-    onTagChange(model.id, trimmed);
-    setIsEditingTag(false);
-  };
-
-  const handleTagKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      commitTag();
-    } else if (e.key === "Escape") {
-      setIsEditingTag(false);
-      setTagInput(model.tag ?? "");
-    }
-  };
-
   return (
     <div
-      className={`terminal-window${model.tag === "coordinator" ? " terminal-window-coordinator" : ""}`}
+      className={`terminal-window${isCoordinator ? " terminal-window-coordinator" : ""}${model.exited ? " state-exited" : model.active ? " state-active" : " state-idle"}${model.needsAttention ? " state-attention" : ""}`}
       style={{
         left: model.x,
         top: model.y,
         width: model.width,
         height: model.height,
         zIndex,
-        "--accent": accent,
-      } as React.CSSProperties}
+      }}
       onPointerDown={() => onFocus(model.id)}
     >
       <div className="terminal-window-titlebar" onPointerDown={handlePointerDown}>
         <div className="terminal-window-title-area">
-          <span className={`terminal-window-title${model.tag === "coordinator" ? " terminal-window-title-coordinator" : ""}`}>
-            {model.title}
-          </span>
-          {model.tag === "coordinator" ? (
-            <span className="terminal-window-tag terminal-window-tag-coordinator">
-              coordinator
-            </span>
-          ) : isEditingTag ? (
+          {editingName && !isCoordinator ? (
             <input
-              type="text"
-              className="terminal-window-tag-input"
-              value={tagInput}
-              onChange={(e) => setTagInput(e.target.value)}
-              onBlur={commitTag}
-              onKeyDown={handleTagKeyDown}
-              placeholder="tag (e.g. claude, codex)"
-              autoFocus
+              className="terminal-window-title-input"
+              value={nameInput}
+              onChange={(e) => setNameInput(e.target.value)}
+              onBlur={() => {
+                const trimmed = nameInput.trim();
+                if (trimmed && trimmed !== model.title) onRename(model.id, trimmed);
+                setEditingName(false);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") e.currentTarget.blur();
+                if (e.key === "Escape") { setNameInput(model.title); setEditingName(false); }
+              }}
               onClick={(e) => e.stopPropagation()}
               onPointerDown={(e) => e.stopPropagation()}
+              autoFocus
             />
-          ) : model.tag ? (
-            <span className="terminal-window-tag" onClick={handleTagClick}>
-              {model.tag}
-            </span>
           ) : (
-            <span className="terminal-window-tag-placeholder" onClick={handleTagClick}>
-              + tag
+            <span
+              className={`terminal-window-title${isCoordinator ? " terminal-window-title-coordinator" : ""}`}
+              onClick={(e) => {
+                if (!isCoordinator) { e.stopPropagation(); setEditingName(true); setNameInput(model.title); }
+              }}
+              title={!isCoordinator ? "Click to rename" : undefined}
+            >
+              {model.title}
             </span>
           )}
         </div>
         {(model.unreadCount ?? 0) > 0 && (
           <span className="terminal-window-badge">{model.unreadCount}</span>
         )}
-        {model.tag !== "coordinator" && (
+        {!isCoordinator && model.mode !== "role" && !model.promoted && !model.exited && (
+          <button
+            className="terminal-window-pin-btn"
+            onClick={(e) => { e.stopPropagation(); onPromote?.(model.id); }}
+            title="Pin — keep this terminal after refresh"
+          >
+            <svg width="11" height="11" viewBox="0 0 11 11" fill="none">
+              <path d="M7 1L10 4L6.5 5.5L5 9L2 6L3.5 4.5L1 1L7 1Z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round"/>
+              <line x1="2" y1="9" x2="0.5" y2="10.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
+            </svg>
+          </button>
+        )}
+        {!isCoordinator && model.promoted && (
+          <span className="terminal-window-pinned" title="Pinned — persists after refresh">
+            <svg width="11" height="11" viewBox="0 0 11 11" fill="none">
+              <path d="M7 1L10 4L6.5 5.5L5 9L2 6L3.5 4.5L1 1L7 1Z" fill="currentColor" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round"/>
+              <line x1="2" y1="9" x2="0.5" y2="10.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
+            </svg>
+          </span>
+        )}
+        {!isCoordinator && (
           <button
             className="terminal-window-close-btn"
             onClick={(e) => {
@@ -203,14 +197,32 @@ export function TerminalWindow({
           </button>
         )}
       </div>
+      <MessageBar messages={model.messages ?? []} />
       <div className="terminal-window-body">
         {children}
         {model.exited && (
           <div className="terminal-window-exited">
-            ⬡ process exited · code {model.exitCode}
+            process exited · code {model.exitCode}
           </div>
         )}
       </div>
+      {model.artifacts && model.artifacts.length > 0 && (
+        <div className="terminal-window-artifact-bar" onPointerDown={(e) => e.stopPropagation()}>
+          {model.artifacts.slice(0, 5).map((f) => (
+            <button
+              key={f.name}
+              className={`artifact-pill${(model.openArtifacts ?? []).some((a) => a.fileName === f.name) ? " artifact-pill-active" : ""}`}
+              onClick={() => onArtifactClick?.(model.id, f.name)}
+            >
+              <span className="artifact-pill-icon">{fileTypeIcon(f.name)}</span>
+              <span className="artifact-pill-name">{f.name}</span>
+            </button>
+          ))}
+          {model.artifacts.length > 5 && (
+            <span className="artifact-pill-overflow">+{model.artifacts.length - 5}</span>
+          )}
+        </div>
+      )}
       <div
         className="terminal-window-resize"
         onPointerDown={handleResizePointerDown}
