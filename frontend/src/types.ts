@@ -2,6 +2,9 @@ export type FolderEntry = {
   id: string;
   label: string;
   path: string;
+  defaultProvider?: "claude" | "codex";
+  defaultMode?: "quick" | "role";
+  defaultRole?: string;
 };
 
 export type DirEntry = {
@@ -9,6 +12,21 @@ export type DirEntry = {
   isDir: boolean;
   childCount?: number;
   mtime?: string;
+};
+
+export type ArtifactFileInfo = { name: string; sizeBytes: number; mtime: string };
+
+export type MessageType = "chat" | "task_assign" | "status_update" | "question" | "handoff" | "artifact_ready" | "blocker";
+
+export type AgentMessage = {
+  from: string;
+  tag: string;
+  preview: string;
+  msgType?: MessageType;
+  messageId?: string;
+  taskId?: string;
+  artifactPath?: string;
+  ts?: string;
 };
 
 export type TerminalWindowModel = {
@@ -25,6 +43,19 @@ export type TerminalWindowModel = {
   exited?: boolean;
   exitCode?: number;
   unreadCount?: number;
+  mode?: "quick" | "role";
+  provider?: "claude" | "codex";
+  needsAttention?: boolean;
+  artifacts?: ArtifactFileInfo[];
+  promoted?: boolean;
+  hasBlocker?: boolean;
+  pendingQuestions?: number;
+  hasHandoff?: boolean;
+  hasArtifactReady?: boolean;
+  lastMessage?: AgentMessage;
+  messages?: AgentMessage[];
+  openArtifacts?: Array<{ fileName: string; content: string | null }>;
+  activeArtifactName?: string | null;
 };
 
 export type CostSummary = {
@@ -35,6 +66,42 @@ export type CostSummary = {
   by_model: Record<string, { cost_usd: number; tokens: number }>;
 };
 
+export type TerminalRegistryEntry = {
+  terminalId: string;
+  pathId: string;
+  sessionName: string;
+  sessionDir: string;
+  sessionType: string;
+  role: "coordinator" | "worker";
+  title: string;
+  tag?: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  pid: number;
+  startedAt: string;
+  status: "running" | "exited";
+  exitCode?: number;
+  exitedAt?: string;
+  mode?: "quick" | "role";
+  provider?: "claude" | "codex";
+  persistence?: "ephemeral" | "persistent";
+  promoted?: boolean;
+};
+
+export type SessionHistoryEntry = {
+  sessionName: string;
+  sessionType: string;
+  startedAt: string;
+  endedAt: string | null;
+  exitCode: number | null;
+  isRunning: boolean;
+  terminalId?: string;
+  mode?: "quick" | "role";
+  tag?: string;
+};
+
 export type ServerMessage =
   | { type: "folder:list"; folders: FolderEntry[] }
   | { type: "folder:added"; folder: FolderEntry }
@@ -42,20 +109,36 @@ export type ServerMessage =
   | { type: "folder:error"; message: string }
   | { type: "fs:readdir"; path: string; entries: DirEntry[] }
   | { type: "fs:error"; path: string; message: string }
-  | { type: "terminal:created"; terminalId: string; pathId: string; x: number; y: number; sessionType: string; sessionName: string }
+  | { type: "terminal:created"; terminalId: string; pathId: string; x: number; y: number; sessionType: string; sessionName: string; tag?: string; mode?: "quick" | "role"; provider?: "claude" | "codex" }
+  | { type: "folder:preset_updated"; pathId: string; folder: FolderEntry }
   | { type: "terminal:output"; terminalId: string; data: string }
   | { type: "terminal:exit"; terminalId: string; exitCode: number }
   | { type: "terminal:error"; terminalId: string; message: string }
+  | { type: "terminal:list"; pathId: string; terminals: TerminalRegistryEntry[] }
+  | { type: "terminal:reconnected"; terminalId: string; pathId: string; bufferedOutput: string }
+  | { type: "session:list"; pathId: string; sessions: SessionHistoryEntry[] }
   | { type: "usage:cost_summary"; pathId: string; summary: CostSummary }
-  | { type: "message:new"; terminalId: string; from: string; tag: string; preview: string };
+  | { type: "terminal:promoted"; terminalId: string; mode: "role"; persistence: "persistent"; tag?: string; newName?: string; newSessionName?: string }
+  | { type: "message:new"; terminalId: string; from: string; tag: string; preview: string; msgType?: string; messageId?: string; taskId?: string; artifactPath?: string }
+  | { type: "message:urgent"; terminalId: string; from: string; msgType: string; preview: string; messageId?: string }
+  | { type: "artifact:update"; terminalId: string; files: ArtifactFileInfo[] }
+  | { type: "artifact:content"; terminalId: string; fileName: string; content: string };
 
 export type ClientMessage =
   | { type: "folder:add"; path: string }
   | { type: "folder:remove"; pathId: string }
   | { type: "folder:list" }
   | { type: "fs:readdir"; path: string }
-  | { type: "terminal:create"; pathId: string; x: number; y: number; sessionType?: "claude" | "codex" | "coordinator" }
+  | { type: "terminal:create"; pathId: string; x: number; y: number; sessionType?: "claude" | "codex" | "coordinator"; provider?: "claude" | "codex"; mode?: "quick" | "role"; role?: string }
+  | { type: "folder:update_preset"; pathId: string; defaultProvider?: "claude" | "codex"; defaultMode?: "quick" | "role"; defaultRole?: string }
   | { type: "terminal:input"; terminalId: string; data: string }
   | { type: "terminal:resize"; terminalId: string; cols: number; rows: number }
   | { type: "terminal:close"; terminalId: string }
-  | { type: "usage:cost_request"; pathId: string };
+  | { type: "terminal:list"; pathId: string }
+  | { type: "terminal:reconnect"; terminalId: string }
+  | { type: "terminal:update"; terminalId: string; x: number; y: number; width: number; height: number; title?: string }
+  | { type: "session:list"; pathId: string }
+  | { type: "terminal:promote"; terminalId: string; role?: string; name?: string }
+  | { type: "usage:cost_request"; pathId: string }
+  | { type: "artifact:list"; terminalId: string }
+  | { type: "artifact:read"; terminalId: string; fileName: string };

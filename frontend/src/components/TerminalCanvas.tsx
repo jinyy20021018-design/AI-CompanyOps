@@ -3,6 +3,8 @@ import {
   useState,
   useCallback,
   useEffect,
+  useImperativeHandle,
+  forwardRef,
   type ReactNode,
   type WheelEvent,
 } from "react";
@@ -15,6 +17,10 @@ type Props = {
   children: ReactNode;
 };
 
+export type TerminalCanvasHandle = {
+  centerOn: (x: number, y: number, width: number, height: number) => void;
+};
+
 const MIN_SCALE = 0.15;
 const MAX_SCALE = 4;
 const ZOOM_STEP = 1.25;
@@ -23,7 +29,7 @@ function clampScale(s: number) {
   return Math.max(MIN_SCALE, Math.min(MAX_SCALE, s));
 }
 
-export function TerminalCanvas({ canSpawn, onCanvasClick, children }: Props) {
+export const TerminalCanvas = forwardRef<TerminalCanvasHandle, Props>(function TerminalCanvas({ canSpawn, onCanvasClick, children }: Props, ref) {
   const outerRef = useRef<HTMLDivElement>(null);
   const [viewport, setViewport] = useState<Viewport>({ x: 0, y: 0, scale: 1 });
   const viewportRef = useRef(viewport);
@@ -33,6 +39,22 @@ export function TerminalCanvas({ canSpawn, onCanvasClick, children }: Props) {
 
   // Keep ref in sync so event handlers always read current values
   useEffect(() => { viewportRef.current = viewport; }, [viewport]);
+
+  useImperativeHandle(ref, () => ({
+    centerOn(x, y, width, height) {
+      const rect = outerRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const scale = viewportRef.current.scale;
+      const termCenterX = x + width / 2;
+      const termCenterY = y + height / 2;
+      setViewport((v) => ({
+        ...v,
+        x: rect.width / 2 - termCenterX * v.scale,
+        y: rect.height / 2 - termCenterY * v.scale,
+      }));
+      void scale; // used via viewportRef above
+    },
+  }));
 
   // Space key → pan cursor mode
   useEffect(() => {
@@ -196,4 +218,4 @@ export function TerminalCanvas({ canSpawn, onCanvasClick, children }: Props) {
       </div>
     </div>
   );
-}
+});

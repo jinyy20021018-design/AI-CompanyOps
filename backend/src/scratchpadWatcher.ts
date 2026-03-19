@@ -8,6 +8,11 @@ export type ScratchpadMessage = {
   tag: string;
   msg: string;
   ref?: string | null;
+  id?: string;
+  msgType?: string;
+  status?: string;
+  taskId?: string;
+  artifactPath?: string;
 };
 
 type WatchState = {
@@ -16,6 +21,18 @@ type WatchState = {
   buffer: string;
   debounceTimer: ReturnType<typeof setTimeout> | null;
 };
+
+function isValidMessage(obj: unknown): obj is ScratchpadMessage {
+  if (typeof obj !== "object" || obj === null) return false;
+  const o = obj as Record<string, unknown>;
+  return (
+    typeof o.ts === "string" &&
+    typeof o.from === "string" &&
+    typeof o.to === "string" &&
+    typeof o.tag === "string" &&
+    typeof o.msg === "string"
+  );
+}
 
 export class ScratchpadWatcher {
   private watched = new Map<string, WatchState>();
@@ -61,8 +78,9 @@ export class ScratchpadWatcher {
           const trimmed = line.trim();
           if (!trimmed) continue;
           try {
-            const msg = JSON.parse(trimmed) as ScratchpadMessage;
-            onMessage(msg);
+            const parsed = JSON.parse(trimmed);
+            if (!isValidMessage(parsed)) continue;
+            onMessage(parsed);
           } catch {
             // Skip malformed lines
           }
