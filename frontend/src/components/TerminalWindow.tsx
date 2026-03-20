@@ -53,6 +53,7 @@ export function TerminalWindow({
   const isCoordinator = model.tag === "coordinator";
   const [editingName, setEditingName] = useState(false);
   const [nameInput, setNameInput] = useState(model.title);
+  const [showAllArtifacts, setShowAllArtifacts] = useState(false);
 
   const handlePointerDown = useCallback(
     (e: React.PointerEvent) => {
@@ -208,7 +209,7 @@ export function TerminalWindow({
       </div>
       {model.artifacts && model.artifacts.length > 0 && (
         <div className="terminal-window-artifact-bar" onPointerDown={(e) => e.stopPropagation()}>
-          {model.artifacts.slice(0, 5).map((f) => (
+          {(showAllArtifacts ? model.artifacts : model.artifacts.slice(0, 3)).map((f) => (
             <button
               key={f.name}
               className={`artifact-pill${(model.openArtifacts ?? []).some((a) => a.fileName === f.name) ? " artifact-pill-active" : ""}`}
@@ -218,8 +219,14 @@ export function TerminalWindow({
               <span className="artifact-pill-name">{f.name}</span>
             </button>
           ))}
-          {model.artifacts.length > 5 && (
-            <span className="artifact-pill-overflow">+{model.artifacts.length - 5}</span>
+          {model.artifacts.length > 3 && (
+            <button
+              className="artifact-pill-overflow"
+              onClick={() => setShowAllArtifacts(!showAllArtifacts)}
+              title={showAllArtifacts ? "Show less" : "Show all artifacts"}
+            >
+              {showAllArtifacts ? "−" : `+${model.artifacts.length - 3}`}
+            </button>
           )}
         </div>
       )}

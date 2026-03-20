@@ -15,10 +15,11 @@ import {
   refreshCostSummary,
   type UsageEvent,
 } from "./usageLogger.js";
-import type { ClientMessage, ServerMessage, DirEntry, TerminalRegistryEntry, SessionHistoryEntry, ArtifactFileInfo } from "./protocol.js";
+import type { ClientMessage, ServerMessage, DirEntry, TerminalRegistryEntry, SessionHistoryEntry, ArtifactFileInfo, ScratchpadEntry } from "./protocol.js";
 import { ScratchpadWatcher, type ScratchpadMessage } from "./scratchpadWatcher.js";
 import { ArtifactWatcher } from "./artifactWatcher.js";
 import { scanClaudeUsage } from "./usageParser.js";
+import { getHoncho, getAgentPeerId, getCoordinatorPeerId, getProjectSessionId } from "./honchoClient.js";
 
 const PORT = 3001;
 const registry = new FolderRegistry();
@@ -55,6 +56,299 @@ const server = http.createServer((req, res) => {
         res.writeHead(400, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: err instanceof Error ? err.message : "Invalid JSON" }));
       }
+    });
+  } else if (req.method === "GET" && req.url?.startsWith("/honcho/context")) {
+    const url = new URL(req.url, "http://localhost");
+    const peerName = url.searchParams.get("peer");
+    const sessionQuery = url.searchParams.get("session");
+    const query = url.searchParams.get("query") || "project knowledge";
+    (async () => {
+      try {
+        const honcho = getHoncho();
+        if (sessionQuery) {
+          const workspacePeer = await honcho.peer(`workspace-${sessionQuery}`);
+          const rep = await workspacePeer.representation({ searchQuery: query, searchTopK: 15 });
+          res.writeHead(200, { "Content-Type": "text/plain" });
+          res.end(rep || "No shared memory yet.");
+        } else {
+          const peer = await honcho.peer(peerName || "coordinator");
+          const rep = await peer.representation({ searchQuery: query, searchTopK: 10 });
+          res.writeHead(200, { "Content-Type": "text/plain" });
+          res.end(rep || "No memory available yet.");
+        }
+      } catch (e) {
+        res.writeHead(500, { "Content-Type": "text/plain" });
+        res.end("Honcho unavailable");
+      }
+    })();
+  } else if (req.method === "POST" && req.url === "/honcho/memory") {
+    let body = "";
+    req.on("data", (chunk) => { body += chunk; });
+    req.on("end", () => {
+      const { peer, content, type, folderPath } = JSON.parse(body);
+      (async () => {
+        try {
+          const honcho = getHoncho();
+          const p = await honcho.peer(peer);
+          const session = await honcho.session(getProjectSessionId(folderPath));
+          await session.addPeers(p);
+          await session.addMessages([
+            p.message(content, { metadata: { type } })
+          ]);
+          const workspacePeer = await honcho.peer(`workspace-${getProjectSessionId(folderPath)}`);
+          await session.addPeers(workspacePeer);
+          await session.addMessages([workspacePeer.message(content, { metadata: { type, from: peer } })]);
+          res.writeHead(200); res.end("ok");
+        } catch (e) {
+          res.writeHead(500); res.end("error");
+        }
+      })();
+    });
+  } else if (req.method === "POST" && req.url === "/spawn") {
+    let body = "";
+    req.on("data", (chunk) => { body += chunk; });
+    req.on("end", () => {
+      (async () => {
+        try {
+          const { folderPath, title, task, x: reqX = 200, y: reqY = 200 } = JSON.parse(body);
+          if (!folderPath || !title || !task) {
+            res.writeHead(400); res.end(JSON.stringify({ error: "folderPath, title, and task required" })); return;
+          }
+
+          const folder = registry.list().find(f => f.path === folderPath);
+          if (!folder) { res.writeHead(404); res.end(JSON.stringify({ error: "Folder not found" })); return; }
+
+          ensureWorkspace(folderPath);
+          const sharedDir = path.join(folderPath, "CoAgent_workspace", "_shared");
+          const tempId = crypto.randomUUID();
+          const { sessionDir, sessionName } = createSessionFolder(folderPath, tempId, "claude", "quick");
+          const cwd = sessionDir;
+
+          // Write spawned-worker CLAUDE.md with task embedded (before Claude starts)
+          fs.writeFileSync(path.join(sessionDir, "CLAUDE.md"), [
+            `# Spawned Worker Agent`,
+            ``,
+            `You were spawned automatically by the coordinator to complete a specific task.`,
+            `**Start work immediately. Do not wait for human input.**`,
+            ``,
+            `## Your assigned task`,
+            task,
+            ``,
+            `## Workflow`,
+            `1. Do the work. Save all outputs to \`$COAGENT_SESSION_DIR/artifacts/\`.`,
+            `2. When done, report back:`,
+            `   \`\`\`bash`,
+            `   coagent send --to "role:coordinator" --type status_update --msg "Done: [one-line summary] — artifacts at $COAGENT_SESSION_DIR/artifacts/"`,
+            `   \`\`\``,
+            `3. Then enter the **wait loop** — keep checking inbox every 30 seconds:`,
+            `   \`\`\`bash`,
+            `   while true; do sleep 30 && coagent inbox; done`,
+            `   \`\`\``,
+            `4. When coordinator sends a \`task_assign\` message → apply the revision and report back again.`,
+            `5. When coordinator sends "approved" or "closed" → exit the loop and stop.`,
+            ``,
+            `## Rules`,
+            `- Never stop working until coordinator explicitly says "approved" or "closed"`,
+            `- All outputs go to \`$COAGENT_SESSION_DIR/artifacts/\``,
+            `- Always report back after completing or revising`,
+          ].join("\n"));
+
+          const claudeSessionsBefore = snapshotClaudeSessions(cwd);
+
+          // Two-phase auto-start:
+          //   Phase 1 — fixed 1s timeout for shell init (reliable across all prompt themes:
+          //             zsh/bash/oh-my-zsh/powerlevel10k all use different prompt chars)
+          //   Phase 2 — watch Claude's output for the "? for shortcuts" hint which appears
+          //             at the end of Claude's startup banner, then inject the task
+          let taskInjected = false;
+          let claudeOutputSoFar = "";  // only accumulate AFTER claude starts (Phase 2 only)
+
+          const session = ptyManager.create(
+            folder.id,
+            cwd,
+            folder.label,
+            sessionDir,
+            (terminalId, data) => {
+              broadcast({ type: "terminal:output", terminalId, data });
+
+              // Phase 2: watch for Claude ready, inject task once
+              if (!taskInjected) {
+                claudeOutputSoFar += data;
+                if (claudeOutputSoFar.includes("? for shortcuts") || claudeOutputSoFar.includes("for shortcuts")) {
+                  taskInjected = true;
+                  setTimeout(() => ptyManager.write(terminalId, task + "\r"), 300);
+                }
+              }
+            },
+            (terminalId, exitCode) => {
+              const meta = sessionMeta.get(terminalId);
+              if (meta) {
+                finalizeSession(meta.sessionDir, exitCode);
+                refreshCostSummary(meta.folderPath);
+                updateActiveSession(meta.folderPath, meta.sessionName, "remove");
+                terminalRegistry.markExited(meta.folderPath, terminalId, exitCode);
+                artifactWatcher.unwatch(path.join(meta.sessionDir, "artifacts"));
+                const sd = path.join(meta.folderPath, "CoAgent_workspace", "_shared");
+                const remaining = (watchedDirCounts.get(sd) ?? 1) - 1;
+                if (remaining <= 0) { scratchpadWatcher.unwatch(sd); watchedDirCounts.delete(sd); }
+                else { watchedDirCounts.set(sd, remaining); }
+                sessionMeta.delete(terminalId);
+              }
+              broadcast({ type: "terminal:exit", terminalId, exitCode });
+            },
+            {
+              COAGENT_SHARED_DIR: sharedDir,
+              COAGENT_SESSION_NAME: sessionName,
+              COAGENT_FOLDER_PATH: folderPath,
+              PATH: `${path.join(sharedDir, "bin")}:${process.env.PATH}`,
+            }
+          );
+
+          sessionMeta.set(session.id, { folderPath, sessionName, sessionDir });
+          updateActiveSession(folderPath, sessionName, "add");
+
+          // Update session.json with actual terminalId
+          const sessionJsonPath = path.join(sessionDir, "session.json");
+          try {
+            const sjson = JSON.parse(fs.readFileSync(sessionJsonPath, "utf-8"));
+            sjson.terminalId = session.id;
+            sjson.pid = session.pid;
+            sjson.tag = "worker";
+            fs.writeFileSync(sessionJsonPath, JSON.stringify(sjson, null, 2));
+          } catch {}
+
+          terminalRegistry.register(folderPath, {
+            terminalId: session.id,
+            pathId: folder.id,
+            sessionName,
+            sessionDir,
+            sessionType: "claude",
+            role: "worker",
+            title,
+            tag: "worker",
+            x: reqX,
+            y: reqY,
+            width: 540,
+            height: 320,
+            pid: session.pid,
+            startedAt: new Date().toISOString(),
+            status: "running",
+            mode: "quick",
+            provider: "claude",
+            persistence: "ephemeral",
+          });
+
+          const count = watchedDirCounts.get(sharedDir) ?? 0;
+          if (count === 0) {
+            scratchpadWatcher.watch(sharedDir, (scratchMsg: ScratchpadMessage) => {
+              const folderEntries = terminalRegistry.load(folderPath);
+              const workerPushTypes = ["blocker", "question", "task_assign", "handoff"];
+
+              console.log("[watcher/spawn] new msg from:", scratchMsg.from, "to:", scratchMsg.to, "entries:", folderEntries.length);
+
+              // Broadcast to group chat feed
+              broadcast({ type: "scratchpad:message", pathId: folder.id, entry: scratchMsg as ScratchpadEntry });
+
+              for (const entry of folderEntries) {
+                const tid = entry.terminalId;
+                if (scratchMsg.from === entry.sessionName) continue;
+
+                let shouldDeliver = false;
+                if (scratchMsg.to === "*") {
+                  shouldDeliver = true;
+                } else if (scratchMsg.to === entry.sessionName) {
+                  shouldDeliver = true;
+                } else if (scratchMsg.to.startsWith("role:")) {
+                  if (entry.role === scratchMsg.to.slice(5)) shouldDeliver = true;
+                } else {
+                  const target = (scratchMsg.to.startsWith("name:") ? scratchMsg.to.slice(5) : scratchMsg.to).toLowerCase();
+                  if ((entry.title || "").toLowerCase() === target || (entry.tag || "").toLowerCase() === target) shouldDeliver = true;
+                }
+                console.log("[watcher/spawn] entry:", entry.sessionName, "title:", entry.title, "tag:", entry.tag, "role:", entry.role, "shouldDeliver:", shouldDeliver, "hasPTY:", ptyManager.has(tid));
+
+                if (!shouldDeliver) continue;
+
+                try {
+                  fs.appendFileSync(path.join(entry.sessionDir, "inbox.jsonl"), JSON.stringify(scratchMsg) + "\n");
+                } catch {}
+
+                broadcast({
+                  type: "message:new",
+                  terminalId: tid,
+                  from: scratchMsg.from,
+                  tag: scratchMsg.tag,
+                  preview: scratchMsg.msg.slice(0, 80),
+                  msgType: scratchMsg.msgType,
+                  messageId: scratchMsg.id,
+                  taskId: scratchMsg.taskId,
+                  artifactPath: scratchMsg.artifactPath,
+                });
+
+                const urgentTypes = ["blocker", "handoff", "question"];
+                if (scratchMsg.msgType && urgentTypes.includes(scratchMsg.msgType)) {
+                  broadcast({
+                    type: "message:urgent",
+                    terminalId: tid,
+                    from: scratchMsg.from,
+                    msgType: scratchMsg.msgType,
+                    preview: scratchMsg.msg.slice(0, 80),
+                    messageId: scratchMsg.id,
+                  });
+                }
+
+                if (ptyManager.has(tid)) {
+                  const isCoordinator = entry.role === "coordinator";
+                  const shouldPush = isCoordinator
+                    ? scratchMsg.msgType !== "status_update" || scratchMsg.from !== "system"
+                    : !!(scratchMsg.msgType && workerPushTypes.includes(scratchMsg.msgType));
+                  if (shouldPush) {
+                    if (Date.now() - ptyManager.getLastOutputTime(tid) > 2000) {
+                      ptyManager.write(tid, `You received a [${scratchMsg.msgType}] message from ${scratchMsg.from}: "${scratchMsg.msg.slice(0, 120)}". Run coagent inbox, read it, and act on it.\r`);
+                    } else {
+                      if (!pendingNotifications.has(tid)) pendingNotifications.set(tid, []);
+                      pendingNotifications.get(tid)!.push(scratchMsg);
+                    }
+                  }
+                }
+              }
+            });
+          }
+          watchedDirCounts.set(sharedDir, count + 1);
+
+          broadcast({
+            type: "terminal:created",
+            terminalId: session.id,
+            pathId: folder.id,
+            x: reqX,
+            y: reqY,
+            sessionType: "claude",
+            sessionName,
+            tag: "worker",
+            mode: "quick",
+            provider: "claude",
+            autoStarted: true,
+            title,
+          });
+
+          artifactWatcher.watch(path.join(sessionDir, "artifacts"), (files) =>
+            broadcast({ type: "artifact:update", terminalId: session.id, files }));
+
+          watchForNewClaudeSession(cwd, claudeSessionsBefore, (uuid) =>
+            terminalRegistry.update(folderPath, session.id, { claudeSessionId: uuid }));
+
+          // Phase 1: fixed 1s for shell init, then start Claude.
+          // Task injection (Phase 2) happens via output-monitoring above.
+          setTimeout(() => {
+            ptyManager.write(session.id, `claude --dangerously-skip-permissions --model haiku\r`);
+          }, 1000);
+
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: true, terminalId: session.id, sessionName }));
+
+        } catch (e) {
+          res.writeHead(500); res.end(JSON.stringify({ error: String(e) }));
+        }
+      })();
     });
   } else {
     res.writeHead(404);
@@ -254,6 +548,9 @@ Use the \`coagent\` CLI for all workspace operations — it handles JSON formatt
 - Use \`coagent\` commands instead of raw echo/JSON — it validates and formats correctly
 - Claim tasks before starting work
 - Save deliverables to \`$COAGENT_SESSION_DIR/artifacts/\` — that is the ONLY place the UI shows files
+- Use \`coagent status\` to see all agents' live state (role, current task, last message)
+- Use \`coagent recall "your question"\` only when you need past knowledge — it queries all agents' shared semantic memory (Honcho, async, not for every startup)
+- Use \`coagent recall --peer agent-NAME "..."\` to query a specific agent's knowledge
 
 ## Saving artifacts
 Any file meant for human review (reports, summaries, outputs) must go in your artifacts directory:
@@ -452,6 +749,11 @@ decision)
     "$(printf '%s' "$DECISION" | sed 's/\\\\/\\\\\\\\/g; s/"/\\\\"/g')" \\
     "$(printf '%s' "$RATIONALE" | sed 's/\\\\/\\\\\\\\/g; s/"/\\\\"/g')" >> "$SHARED_DIR/decisions.jsonl"
   echo "Decision $DID logged."
+  if command -v curl &>/dev/null; then
+    curl -s -X POST http://localhost:3001/honcho/memory \\
+      -H "Content-Type: application/json" \\
+      -d "{\\"peer\\":\\"agent-\${SESSION_NAME}\\",\\"content\\":\\"[decision] \$(printf '%s' "$DECISION" | sed 's/\\\\/\\\\\\\\/g; s/\\"/\\\\"/g') — \$(printf '%s' "$RATIONALE" | sed 's/\\\\/\\\\\\\\/g; s/\\"/\\\\"/g')\\",\\"type\\":\\"decision\\",\\"folderPath\\":\\"$(dirname $(dirname $SHARED_DIR))\\"}" &
+  fi
   ;;
 
 # ── memory ────────────────────────────────────────────────────
@@ -470,6 +772,11 @@ memory)
   printf '{"ts":"%s","session":"%s","type":"%s","content":"%s"}\\n' \\
     "$(ts)" "$SESSION_NAME" "$TYPE" \\
     "$(printf '%s' "$CONTENT" | sed 's/\\\\/\\\\\\\\/g; s/"/\\\\"/g')" >> "$SHARED_DIR/memory.jsonl"
+  if command -v curl &>/dev/null; then
+    curl -s -X POST http://localhost:3001/honcho/memory \\
+      -H "Content-Type: application/json" \\
+      -d "{\\"peer\\":\\"agent-\${SESSION_NAME}\\",\\"content\\":\\"[memory/\${TYPE}] \$(printf '%s' "$CONTENT" | sed 's/\\\\/\\\\\\\\/g; s/\\"/\\\\"/g')\\",\\"type\\":\\"\${TYPE}\\",\\"folderPath\\":\\"$(dirname $(dirname $SHARED_DIR))\\"}" &
+  fi
   # Write to shared.md only if promoted (has memory.md)
   if [[ "$TARGET" == "shared" ]]; then
     if [[ -n "$SESSION_DIR" && -f "$SESSION_DIR/memory.md" ]]; then
@@ -556,6 +863,88 @@ workers)
   fi
   ;;
 
+# ── recall (Honcho semantic memory) ──────────────────────────
+recall)
+  PEER=""; QUERY=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --peer) PEER="$2"; shift 2;;
+      *) QUERY="\${QUERY} $1"; shift;;
+    esac
+  done
+  QUERY="\${QUERY:-project knowledge}"
+  ENCODED=$(printf '%s' "$QUERY" | python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.stdin.read().strip()))")
+  FOLDER_PATH="$(dirname $(dirname $SHARED_DIR))"
+  if [[ -n "$PEER" ]]; then
+    curl -s "http://localhost:3001/honcho/context?peer=\${PEER}&query=\${ENCODED}"
+  else
+    SESSION_ID="project-$(printf '%s' "$FOLDER_PATH" | sed 's/[\/\s.]/-/g')"
+    curl -s "http://localhost:3001/honcho/context?session=\${SESSION_ID}&query=\${ENCODED}"
+  fi
+  ;;
+
+# ── spawn worker terminal ─────────────────────────────────────
+spawn)
+  TITLE=""; TASK=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --title) TITLE="$2"; shift 2;;
+      --task)  TASK="$2";  shift 2;;
+      *) echo "Unknown flag: $1" >&2; exit 1;;
+    esac
+  done
+  if [[ -z "$TITLE" || -z "$TASK" ]]; then
+    echo "Usage: coagent spawn --title \\"Worker name\\" --task \\"Detailed instructions\\"" >&2; exit 1
+  fi
+  FOLDER_PATH="\${COAGENT_FOLDER_PATH:?COAGENT_FOLDER_PATH not set}"
+  ESCAPED_TITLE="$(printf '%s' "$TITLE" | python3 -c "import sys,json; print(json.dumps(sys.stdin.read()))")"
+  ESCAPED_TASK="$(printf '%s' "$TASK" | python3 -c "import sys,json; print(json.dumps(sys.stdin.read()))")"
+  RESULT=$(curl -s -X POST http://localhost:3001/spawn \\
+    -H "Content-Type: application/json" \\
+    -d "{\\"folderPath\\":\\"\${FOLDER_PATH}\\",\\"title\\":\${ESCAPED_TITLE},\\"task\\":\${ESCAPED_TASK}}")
+  # Print a clean line the coordinator can capture: sessionName=<name>
+  SESSION=$(printf '%s' "$RESULT" | python3 -c "import sys,json; r=json.loads(sys.stdin.read()); print(r.get('sessionName',''))" 2>/dev/null)
+  if [[ -n "$SESSION" ]]; then
+    echo "ok sessionName=$SESSION"
+  else
+    echo "$RESULT" >&2; exit 1
+  fi
+  ;;
+
+# ── status (live snapshot of all agents) ──────────────────────
+status)
+  python3 -c "
+import json, sys
+from pathlib import Path
+
+shared = Path('$SHARED_DIR')
+try: registry = json.loads((shared / 'terminal-registry.json').read_text())
+except: registry = []
+tasks = {}
+try:
+  for line in (shared / 'tasks.jsonl').read_text().splitlines():
+    t = json.loads(line)
+    tasks[t.get('owner','')] = t
+except: pass
+last_msg = {}
+try:
+  for line in (shared / 'scratchpad.jsonl').read_text().splitlines():
+    m = json.loads(line)
+    last_msg[m.get('from','')] = m.get('msg','')[:60]
+except: pass
+
+for e in registry:
+  name = e.get('title') or e.get('sessionName','?')
+  role = e.get('role','worker')
+  status = e.get('status','?')
+  sname = e.get('sessionName','')
+  task = tasks.get(sname, {})
+  task_str = f'task={task.get(\"id\",\"—\")}:{task.get(\"status\",\"—\")}' if task else 'no task'
+  msg = last_msg.get(sname, '')
+  print(f'  {name:<18} [{role:<11}] {status:<8} {task_str:<25} last: {msg}')
+" 2>/dev/null
+  ;;
+
 # ── help ──────────────────────────────────────────────────────
 help|*)
   cat <<'HELP'
@@ -571,6 +960,9 @@ Write commands:
   decision --decision TEXT [--rationale TEXT]
   memory   --content TEXT [--type learning] [--shared]
 
+Spawn commands:
+  spawn    --title TEXT --task TEXT  Spawn a new worker terminal on the canvas
+
 Read commands:
   inbox [--count]  Read your inbox (--count for unread count only)
   state      Read workspace state.json
@@ -578,6 +970,8 @@ Read commands:
   context    Read project context.md
   sessions   List terminal registry entries
   workers    Show recent output from all worker sessions
+  status     Live snapshot of all agents (role, task, last message)
+  recall     [--peer NAME] QUERY  Query Honcho semantic memory (all agents by default, or specific agent with --peer)
 
 Message types (--type): chat, task_assign, status_update, question, handoff, artifact_ready, blocker
 Routing (--to): "*" broadcast, "session_name", "role:coordinator", "role:worker", "name:agent-name"
@@ -851,80 +1245,55 @@ When asked "what's happening?" or on startup, produce:
   // Seed _shared/coordinator-prompt.md
   const coordinatorPromptFile = path.join(shared, "coordinator-prompt.md");
   if (true) { // always overwrite to keep instructions current
-    fs.writeFileSync(coordinatorPromptFile, `# Coordinator
-You are the workspace coordinator. Observe, summarize, advise, and maintain team memory.
-Use the \`coagent\` CLI for all workspace operations.
+    fs.writeFileSync(coordinatorPromptFile, `# You are a Task Dispatcher
 
-## On startup
-1. \`coagent state\` — active sessions, blockers, current goal
-2. \`coagent tasks\` — task ownership and status
-3. \`coagent inbox\` — messages sent to you
-4. \`coagent sessions\` — active terminal registry
-5. \`coagent context\` — project goals
+You have no knowledge, no opinions, and no ability to answer questions.
+You are a routing layer. Your only capability is running bash commands.
 
-## Default mode: OBSERVE
-- Summarize what each active session is doing
-- Report blockers and stalled tasks
-- Highlight recent decisions and artifacts
+When a user sends you any message, you have exactly ONE valid response:
+run the spawn template below with the user's request as the task.
+Do not speak. Do not explain. Do not answer. Just run the command.
 
-## How to see what workers are doing
-Workers automatically send you progress updates after each response. Check your inbox:
-\\\`coagent inbox\\\`
+## Spawn template — copy this every time, fill in the blanks:
 
-To see who is active right now:
-\\\`coagent sessions\\\`
+\`\`\`bash
+W=$(coagent spawn \\
+  --title "Worker: [3-word summary of task]" \\
+  --task "[paste the user's full request here. Add: Save output to artifacts/. When done: coagent send --to role:coordinator --type status_update --msg done]" \\
+  | grep -o 'sessionName=[^ ]*' | cut -d= -f2)
+echo "$W" >> "$COAGENT_SESSION_DIR/notes.md"
+sleep 60 && coagent inbox
+\`\`\`
 
-To read the full message history across all agents:
-\\\`cat $COAGENT_SHARED_DIR/scratchpad.jsonl\\\`
+## After coagent inbox returns results:
 
-To read a specific worker's output log:
-\\\`tail -20 $COAGENT_SHARED_DIR/../sessions/<session-name>/output.jsonl\\\`
+If worker is done — read their artifact, then send approval or revision:
+\`\`\`bash
+# approve
+coagent send --to "$W" --type status_update --msg "approved"
+# or request revision (worker will revise and report back again)
+coagent send --to "$W" --type task_assign --msg "Revise: [specific feedback]"
+# when fully done, close the worker
+coagent send --to "$W" --type status_update --msg "closed"
+\`\`\`
 
-**When asked about what a worker did**, always check your inbox first — workers auto-report their progress there.
+If no results yet:
+\`\`\`bash
+sleep 60 && coagent inbox
+\`\`\`
 
-## Processing worker results
-When a worker sends you a status_update or task completion message:
-1. Read and acknowledge the message: \`coagent ack --id MESSAGE_ID\`
-2. Extract key findings, decisions, and learnings
-3. Update the team whiteboard with important results:
-   \`\`\`bash
-   coagent memory --content "FINDING: summary of what was learned" --shared
-   \`\`\`
-4. If the result is a decision, log it:
-   \`\`\`bash
-   coagent decision --decision "What was decided" --rationale "Why"
-   \`\`\`
-5. Reply to the worker with feedback or next steps:
-   \`\`\`bash
-   coagent send --to "worker-name" --type status_update --msg "Acknowledged. Next: ..."
-   \`\`\`
+## Final report — run this after all workers approved:
+\`\`\`bash
+cat > "$COAGENT_SESSION_DIR/artifacts/final-report.md" << 'EOF'
+[synthesize all worker outputs here]
+EOF
+coagent artifact --type report --path "$COAGENT_SESSION_DIR/artifacts/final-report.md" --desc "Final report"
+\`\`\`
 
-## When asked to ACT
-- Recommend task priorities
-- Suggest spawning new terminals for specific work
-- Draft task descriptions for other agents
-- Only dispatch/create tasks when user explicitly asks
-
-## Saving artifacts (summaries, reports, analyses)
-When you produce a summary, workspace report, or analysis meant for human review:
-1. Save the file to your artifacts directory:
-   \`\`\`bash
-   cat > "$COAGENT_SESSION_DIR/artifacts/summary.md" << 'EOF'
-   # Summary
-   ...content...
-   EOF
-   \`\`\`
-2. Register it:
-   \`\`\`bash
-   coagent artifact --type report --path "$COAGENT_SESSION_DIR/artifacts/summary.md" --desc "Brief description"
-   \`\`\`
-Only files in \`$COAGENT_SESSION_DIR/artifacts/\` are shown to the user.
-
-## Rules
-- Do NOT work on tasks yourself — you are the observer, not a worker
-- Keep answers concise — bullet points preferred
-- Reference specific session names and task IDs
-- Always check inbox when prompted — workers report results there
+## On startup:
+\`\`\`bash
+coagent inbox
+\`\`\`
 `);
   }
 
@@ -947,6 +1316,9 @@ Use the \`coagent\` CLI for all workspace operations — it handles JSON formatt
 - Use \`coagent\` commands instead of raw echo/JSON — it validates and formats correctly
 - Claim tasks before starting work
 - Save deliverables to \`$COAGENT_SESSION_DIR/artifacts/\` — that is the ONLY place the UI shows files
+- Use \`coagent status\` to see all agents' live state (role, current task, last message)
+- Use \`coagent recall "your question"\` only when you need past knowledge — it queries all agents' shared semantic memory (Honcho, async, not for every startup)
+- Use \`coagent recall --peer agent-NAME "..."\` to query a specific agent's knowledge
 
 ## Saving artifacts
 Any file meant for human review (reports, summaries, outputs) must go in your artifacts directory:
@@ -994,6 +1366,9 @@ coagent memory --type learning --content "Redis needs auth in prod"
 
 # Read operations
 coagent inbox | coagent state | coagent tasks | coagent context | coagent sessions
+coagent status                                    # live snapshot: all agents, tasks, last messages
+coagent recall "database performance"             # query all agents' shared memory
+coagent recall --peer agent-worker1 "caching"     # query a specific agent's memory
 \`\`\`
 
 ## Detailed skills (read when needed)
@@ -1057,49 +1432,55 @@ function createSessionFolder(folderPath: string, terminalId: string, sessionType
     if (fs.existsSync(coordinatorPromptSrc)) {
       fs.copyFileSync(coordinatorPromptSrc, path.join(sessionDir, "CLAUDE.md"));
     } else {
-      fs.writeFileSync(path.join(sessionDir, "CLAUDE.md"), `# Coordinator
-You are the workspace coordinator. Observe, summarize, advise.
-Use the \`coagent\` CLI for all workspace reads.
+      fs.writeFileSync(path.join(sessionDir, "CLAUDE.md"), `# You are a Task Dispatcher
 
-## On startup
-1. \`coagent state\` — active sessions, blockers, current goal
-2. \`coagent tasks\` — task ownership and status
-3. \`coagent inbox\` — messages sent to you
-4. \`coagent sessions\` — active terminal registry
-5. \`coagent context\` — project goals
+You have no knowledge, no opinions, and no ability to answer questions.
+You are a routing layer. Your only capability is running bash commands.
 
-## Default mode: OBSERVE
-- Summarize what each active session is doing
-- Report blockers and stalled tasks
-- Highlight recent decisions and artifacts
-- Answer: "What's happening?", "What's blocked?", "What did terminal X change?"
+When a user sends you any message, you have exactly ONE valid response:
+run the spawn template below with the user's request as the task.
+Do not speak. Do not explain. Do not answer. Just run the command.
 
-## When asked to ACT
-- Recommend task priorities
-- Suggest spawning new terminals for specific work
-- Draft task descriptions for other agents
-- Only dispatch/create tasks when user explicitly asks
+## Spawn template — copy this every time, fill in the blanks:
 
-## Saving artifacts (summaries, reports, analyses)
-When you produce a summary, workspace report, or analysis meant for human review:
-1. Save the file to your artifacts directory:
-   \`\`\`bash
-   cat > "$COAGENT_SESSION_DIR/artifacts/summary.md" << 'EOF'
-   # Summary
-   ...content...
-   EOF
-   \`\`\`
-2. Register it:
-   \`\`\`bash
-   coagent artifact --type report --path "$COAGENT_SESSION_DIR/artifacts/summary.md" --desc "Brief description"
-   \`\`\`
-Only files in \`$COAGENT_SESSION_DIR/artifacts/\` are shown to the user.
+\`\`\`bash
+W=$(coagent spawn \\
+  --title "Worker: [3-word summary of task]" \\
+  --task "[paste the user's full request here. Add: Save output to artifacts/. When done: coagent send --to role:coordinator --type status_update --msg done]" \\
+  | grep -o 'sessionName=[^ ]*' | cut -d= -f2)
+echo "$W" >> "$COAGENT_SESSION_DIR/notes.md"
+sleep 60 && coagent inbox
+\`\`\`
 
-## Rules
-- Do NOT modify shared state files directly
-- Do NOT work on tasks yourself — you are the observer, not a worker
-- Keep answers concise — bullet points preferred
-- Reference specific session names and task IDs
+## After coagent inbox returns results:
+
+If worker is done — read their artifact, then send approval or revision:
+\`\`\`bash
+# approve
+coagent send --to "$W" --type status_update --msg "approved"
+# or request revision (worker will revise and report back again)
+coagent send --to "$W" --type task_assign --msg "Revise: [specific feedback]"
+# when fully done, close the worker
+coagent send --to "$W" --type status_update --msg "closed"
+\`\`\`
+
+If no results yet:
+\`\`\`bash
+sleep 60 && coagent inbox
+\`\`\`
+
+## Final report — run this after all workers approved:
+\`\`\`bash
+cat > "$COAGENT_SESSION_DIR/artifacts/final-report.md" << 'EOF'
+[synthesize all worker outputs here]
+EOF
+coagent artifact --type report --path "$COAGENT_SESSION_DIR/artifacts/final-report.md" --desc "Final report"
+\`\`\`
+
+## On startup:
+\`\`\`bash
+coagent inbox
+\`\`\`
 `);
     }
     try {
@@ -1115,42 +1496,34 @@ You are a worker terminal in a multi-agent workspace.
 ## On startup
 1. \`coagent inbox\` — check for assigned tasks
 2. \`coagent context\` — project goals
-3. \`coagent tasks\` — current task board
-4. \`coagent sessions\` — who else is active
 
 ## Workflow
-1. Check your inbox for a task assignment
-2. Claim it: \`coagent task start --id ID --title "..."\`
-3. Do the work
-4. When done, **always** report results to the coordinator:
+1. Check inbox for your task assignment
+2. Do the work. Save all outputs to \`$COAGENT_SESSION_DIR/artifacts/\`.
+3. When done, report back to coordinator:
    \`\`\`bash
-   coagent task done --id ID --result "Summary of what was done"
-   coagent send --to "role:coordinator" --type status_update --msg "Completed ID: brief summary of findings and results"
+   coagent send --to "role:coordinator" --type status_update --msg "Done: [summary] — artifacts at $COAGENT_SESSION_DIR/artifacts/"
    \`\`\`
-5. If blocked: \`coagent send --to "role:coordinator" --type blocker --msg "Blocked on ID: reason"\`
+4. Then enter the **wait loop** — keep checking inbox every 30 seconds:
+   \`\`\`bash
+   while true; do sleep 30 && coagent inbox; done
+   \`\`\`
+5. When coordinator sends a \`task_assign\` message → apply the revision and report back again.
+6. When coordinator sends "approved" or "closed" → exit the loop and stop.
 
-## Saving artifacts (reports, outputs, deliverables)
-When your task produces a report, analysis, or any file meant for human review:
-1. Save the file inside your artifacts directory:
-   \`\`\`bash
-   cat > "$COAGENT_SESSION_DIR/artifacts/report.md" << 'EOF'
-   # Report
-   ...content...
-   EOF
-   \`\`\`
-2. Register it so the coordinator can find it:
-   \`\`\`bash
-   coagent artifact --type report --path "$COAGENT_SESSION_DIR/artifacts/report.md" --desc "Brief description"
-   \`\`\`
-
-Only files saved to \`$COAGENT_SESSION_DIR/artifacts/\` are shown to the user. Everything else stays internal.
+## Saving artifacts
+\`\`\`bash
+cat > "$COAGENT_SESSION_DIR/artifacts/report.md" << 'EOF'
+# Report
+...content...
+EOF
+coagent artifact --type report --path "$COAGENT_SESSION_DIR/artifacts/report.md" --desc "Brief description"
+\`\`\`
 
 ## Rules
-- Always report back to coordinator when your task is complete
-- Include key findings, decisions made, and files touched in your report
-- Save important learnings: \`coagent memory --content "..."\`
-- Your notes are in \`notes.md\`
-- You cannot write to shared memory until promoted
+- Never stop until coordinator says "approved" or "closed"
+- All outputs go to \`$COAGENT_SESSION_DIR/artifacts/\`
+- Always report back after completing or revising
 `);
     }
   }
@@ -1284,7 +1657,7 @@ function injectSessionContext(terminalId: string, sessionDir: string): void {
       const last30 = lines.slice(-30).join("\n");
       // Write a comment into the PTY so Claude sees context
       setTimeout(() => {
-        ptyManager.write(terminalId, `# Previous session context (last ${Math.min(lines.length, 30)} lines):\n# ${last30.replace(/\n/g, "\n# ")}\n`);
+        ptyManager.write(terminalId, `# Previous session context (last ${Math.min(lines.length, 30)} lines):\n# ${last30.replace(/\n/g, "\n# ")}\r`);
       }, 500);
     }
   } catch {}
@@ -1425,6 +1798,25 @@ wss.on("connection", (ws: WebSocket) => {
           // Workers access the project folder via COAGENT_FOLDER_PATH.
           const cwd = sessionDir;
 
+          // Inject Honcho cross-project memory into coordinator CLAUDE.md
+          if (sessionType === "coordinator" && process.env.HONCHO_API_KEY) {
+            (async () => {
+              try {
+                const honcho = getHoncho();
+                const coordinatorPeer = await honcho.peer(getCoordinatorPeerId(folder.path));
+                const rep = await coordinatorPeer.representation({
+                  searchQuery: "project context patterns knowledge",
+                  searchTopK: 15,
+                });
+                if (rep) {
+                  const claudeMdPath = path.join(sessionDir, "CLAUDE.md");
+                  const existing = fs.existsSync(claudeMdPath) ? fs.readFileSync(claudeMdPath, "utf-8") : "";
+                  fs.writeFileSync(claudeMdPath, existing + `\n\n## Cross-Project Memory\n\n${rep}\n`);
+                }
+              } catch (e) { console.warn("[honcho] context injection failed:", e); }
+            })();
+          }
+
           // Snapshot existing Claude sessions before spawning so we can identify the new UUID
           const claudeSessionsBefore = snapshotClaudeSessions(cwd);
 
@@ -1456,6 +1848,23 @@ wss.on("connection", (ws: WebSocket) => {
                 } else {
                   watchedDirCounts.set(sd, remaining);
                 }
+                // Record exit event to Honcho
+                if (process.env.HONCHO_API_KEY) {
+                  (async () => {
+                    try {
+                      const honcho = getHoncho();
+                      const peer = await honcho.peer(getAgentPeerId(meta.sessionName));
+                      const hSession = await honcho.session(getProjectSessionId(meta.folderPath));
+                      await hSession.addMessages([
+                        peer.message(
+                          `Agent "${meta.sessionName}" exited (code: ${exitCode})`,
+                          { metadata: { type: "lifecycle", event: "exit", exitCode } }
+                        ),
+                      ]);
+                    } catch (e) { console.warn("[honcho] exit record failed:", e); }
+                  })();
+                }
+
                 sessionMeta.delete(terminalId);
               }
               send(ws, { type: "terminal:exit", terminalId, exitCode });
@@ -1470,6 +1879,26 @@ wss.on("connection", (ws: WebSocket) => {
 
           // Track session metadata
           sessionMeta.set(session.id, { folderPath: folder.path, sessionName, sessionDir });
+
+          // Record spawn event to Honcho
+          if (process.env.HONCHO_API_KEY) {
+            (async () => {
+              try {
+                const honcho = getHoncho();
+                const peer = await honcho.peer(getAgentPeerId(sessionName));
+                const hSession = await honcho.session(getProjectSessionId(folder.path), {
+                  metadata: { type: "project", folderPath: folder.path },
+                });
+                await hSession.addPeers(peer);
+                await hSession.addMessages([
+                  peer.message(
+                    `Agent "${folder.label}" started in session "${sessionName}"`,
+                    { metadata: { type: "lifecycle", event: "spawn" } }
+                  ),
+                ]);
+              } catch (e) { console.warn("[honcho] spawn record failed:", e); }
+            })();
+          }
 
           const tag = sessionType === "coordinator" ? "coordinator" : (role ?? sessionType);
 
@@ -1494,7 +1923,7 @@ wss.on("connection", (ws: WebSocket) => {
             sessionDir,
             sessionType,
             role: sessionType === "coordinator" ? "coordinator" : "worker",
-            title: "",
+            title: msg.title ?? "",
             tag,
             x: msg.x,
             y: msg.y,
@@ -1512,92 +1941,101 @@ wss.on("connection", (ws: WebSocket) => {
           const count = watchedDirCounts.get(sharedDir) ?? 0;
           if (count === 0) {
             scratchpadWatcher.watch(sharedDir, (scratchMsg: ScratchpadMessage) => {
-              // Route message to target sessions' inboxes
-              for (const [tid, meta] of sessionMeta.entries()) {
-                const metaShared = path.join(meta.folderPath, "CoAgent_workspace", "_shared");
-                if (metaShared !== sharedDir) continue;
-                // Don't deliver to sender
-                if (scratchMsg.from === meta.sessionName) continue;
+              // Route using registry as source of truth — covers ALL workers,
+              // including ephemeral ones not currently in sessionMeta.
+              const folderEntries = terminalRegistry.load(folder.path);
+              const workerPushTypes = ["blocker", "question", "task_assign", "handoff"];
 
-                // Role-based routing + name matching
+              console.log("[watcher] new msg from:", scratchMsg.from, "to:", scratchMsg.to, "entries:", folderEntries.length);
+
+              // Broadcast to group chat feed
+              broadcast({ type: "scratchpad:message", pathId: msg.pathId, entry: scratchMsg as ScratchpadEntry });
+
+              for (const entry of folderEntries) {
+                const tid = entry.terminalId;
+                if (scratchMsg.from === entry.sessionName) continue; // don't deliver to sender
+
                 let shouldDeliver = false;
                 if (scratchMsg.to === "*") {
                   shouldDeliver = true;
-                } else if (scratchMsg.to === meta.sessionName) {
+                } else if (scratchMsg.to === entry.sessionName) {
                   shouldDeliver = true;
                 } else if (scratchMsg.to.startsWith("role:")) {
-                  const targetRole = scratchMsg.to.slice(5);
-                  const entries = terminalRegistry.load(meta.folderPath);
-                  const entry = entries.find(e => e.terminalId === tid);
-                  if (entry && entry.role === targetRole) shouldDeliver = true;
+                  if (entry.role === scratchMsg.to.slice(5)) shouldDeliver = true;
                 } else {
-                  // Match against display title, tag, or name: prefix
-                  const target = scratchMsg.to.startsWith("name:") ? scratchMsg.to.slice(5) : scratchMsg.to;
-                  const entries = terminalRegistry.load(meta.folderPath);
-                  const entry = entries.find(e => e.terminalId === tid);
-                  if (entry) {
-                    const titleLower = (entry.title || "").toLowerCase();
-                    const tagLower = (entry.tag || "").toLowerCase();
-                    const targetLower = target.toLowerCase();
-                    if (titleLower === targetLower || tagLower === targetLower) shouldDeliver = true;
-                  }
+                  const target = (scratchMsg.to.startsWith("name:") ? scratchMsg.to.slice(5) : scratchMsg.to).toLowerCase();
+                  if ((entry.title || "").toLowerCase() === target || (entry.tag || "").toLowerCase() === target) shouldDeliver = true;
                 }
+                console.log("[watcher] entry:", entry.sessionName, "title:", entry.title, "tag:", entry.tag, "role:", entry.role, "shouldDeliver:", shouldDeliver, "hasPTY:", ptyManager.has(tid));
 
-                if (shouldDeliver) {
-                  // Append to session inbox
-                  const inboxPath = path.join(meta.sessionDir, "inbox.jsonl");
-                  try {
-                    fs.appendFileSync(inboxPath, JSON.stringify(scratchMsg) + "\n");
-                  } catch {}
-                  // Broadcast WS notification to all connected clients
+                if (!shouldDeliver) continue;
+
+                // Inbox write — works even without an active PTY
+                try {
+                  fs.appendFileSync(path.join(entry.sessionDir, "inbox.jsonl"), JSON.stringify(scratchMsg) + "\n");
+                } catch {}
+
+                broadcast({
+                  type: "message:new",
+                  terminalId: tid,
+                  from: scratchMsg.from,
+                  tag: scratchMsg.tag,
+                  preview: scratchMsg.msg.slice(0, 80),
+                  msgType: scratchMsg.msgType,
+                  messageId: scratchMsg.id,
+                  taskId: scratchMsg.taskId,
+                  artifactPath: scratchMsg.artifactPath,
+                });
+
+                const urgentTypes = ["blocker", "handoff", "question"];
+                if (scratchMsg.msgType && urgentTypes.includes(scratchMsg.msgType)) {
                   broadcast({
-                    type: "message:new",
+                    type: "message:urgent",
                     terminalId: tid,
                     from: scratchMsg.from,
-                    tag: scratchMsg.tag,
-                    preview: scratchMsg.msg.slice(0, 80),
                     msgType: scratchMsg.msgType,
+                    preview: scratchMsg.msg.slice(0, 80),
                     messageId: scratchMsg.id,
-                    taskId: scratchMsg.taskId,
-                    artifactPath: scratchMsg.artifactPath,
                   });
+                }
 
-                  // Urgent message push for blocker/handoff/question
-                  const urgentTypes = ["blocker", "handoff", "question"];
-                  if (scratchMsg.msgType && urgentTypes.includes(scratchMsg.msgType)) {
-                    broadcast({
-                      type: "message:urgent",
-                      terminalId: tid,
-                      from: scratchMsg.from,
-                      msgType: scratchMsg.msgType,
-                      preview: scratchMsg.msg.slice(0, 80),
-                      messageId: scratchMsg.id,
-                    });
-                  }
-
-                  // PTY input injection
-                  // Coordinator gets injected for ALL message types (it's the hub)
-                  // Workers only get injected for important types
-                  const workerPushTypes = ["blocker", "question", "task_assign", "handoff"];
-                  const entry = terminalRegistry.load(meta.folderPath).find(e => e.terminalId === tid);
-                  const isCoordinator = entry?.role === "coordinator";
+                // PTY injection — only if PTY is alive
+                if (ptyManager.has(tid)) {
+                  const isCoordinator = entry.role === "coordinator";
                   const shouldPush = isCoordinator
-                    ? scratchMsg.msgType !== "status_update" || scratchMsg.from !== "system"  // skip system rename/promo noise
-                    : (scratchMsg.msgType && workerPushTypes.includes(scratchMsg.msgType));
+                    ? scratchMsg.msgType !== "status_update" || scratchMsg.from !== "system"
+                    : !!(scratchMsg.msgType && workerPushTypes.includes(scratchMsg.msgType));
                   if (shouldPush) {
-                    const lastOutput = ptyManager.getLastOutputTime(tid);
-                    const idleMs = Date.now() - lastOutput;
-                    if (idleMs > 2000) {
-                      // Agent is idle at prompt — inject as user input
-                      const prompt = `You received a [${scratchMsg.msgType}] message from ${scratchMsg.from}: "${scratchMsg.msg.slice(0, 120)}". Run coagent inbox, read it, and act on it.\n`;
-                      ptyManager.write(tid, prompt);
+                    if (Date.now() - ptyManager.getLastOutputTime(tid) > 2000) {
+                      ptyManager.write(tid, `You received a [${scratchMsg.msgType}] message from ${scratchMsg.from}: "${scratchMsg.msg.slice(0, 120)}". Run coagent inbox, read it, and act on it.\r`);
                     } else {
-                      // Agent is busy — queue for delivery when idle
                       if (!pendingNotifications.has(tid)) pendingNotifications.set(tid, []);
                       pendingNotifications.get(tid)!.push(scratchMsg);
                     }
                   }
                 }
+              }
+
+              // Record message to Honcho for semantic memory
+              if (process.env.HONCHO_API_KEY) {
+                (async () => {
+                  try {
+                    const honcho = getHoncho();
+                    const peer = await honcho.peer(getAgentPeerId(scratchMsg.from));
+                    const session = await honcho.session(getProjectSessionId(folder.path), {
+                      metadata: { type: "project", folderPath: folder.path },
+                    });
+                    await session.addPeers(peer);
+                    await session.addMessages([
+                      peer.message(
+                        `[${scratchMsg.tag}] ${scratchMsg.from} → ${scratchMsg.to}: ${scratchMsg.msg}`,
+                        { metadata: { tag: scratchMsg.tag, from: scratchMsg.from, to: scratchMsg.to, msgType: scratchMsg.msgType } }
+                      ),
+                    ]);
+                  } catch (e) {
+                    console.warn("[honcho] Failed to record message:", e);
+                  }
+                })();
               }
             });
           }
@@ -1614,6 +2052,7 @@ wss.on("connection", (ws: WebSocket) => {
             tag,
             mode,
             provider,
+            ...(msg.title ? { title: msg.title } : {}),
           });
 
           // Start watching session artifacts directory
@@ -1756,7 +2195,79 @@ wss.on("connection", (ws: WebSocket) => {
           // Re-watch scratchpad
           const count = watchedDirCounts.get(sharedDir) ?? 0;
           if (count === 0) {
-            // scratchpad already watched if another terminal is running; increment ref
+            const folderPath = meta.folderPath;
+            const pathId = entry.pathId;
+            scratchpadWatcher.watch(sharedDir, (scratchMsg: ScratchpadMessage) => {
+              const folderEntries = terminalRegistry.load(folderPath);
+              const workerPushTypes = ["blocker", "question", "task_assign", "handoff"];
+
+              console.log("[watcher/reconnect] new msg from:", scratchMsg.from, "to:", scratchMsg.to, "entries:", folderEntries.length);
+
+              broadcast({ type: "scratchpad:message", pathId, entry: scratchMsg as ScratchpadEntry });
+
+              for (const e of folderEntries) {
+                const tid = e.terminalId;
+                if (scratchMsg.from === e.sessionName) continue;
+
+                let shouldDeliver = false;
+                if (scratchMsg.to === "*") {
+                  shouldDeliver = true;
+                } else if (scratchMsg.to === e.sessionName) {
+                  shouldDeliver = true;
+                } else if (scratchMsg.to.startsWith("role:")) {
+                  if (e.role === scratchMsg.to.slice(5)) shouldDeliver = true;
+                } else {
+                  const target = (scratchMsg.to.startsWith("name:") ? scratchMsg.to.slice(5) : scratchMsg.to).toLowerCase();
+                  if ((e.title || "").toLowerCase() === target || (e.tag || "").toLowerCase() === target) shouldDeliver = true;
+                }
+                console.log("[watcher/reconnect] entry:", e.sessionName, "title:", e.title, "tag:", e.tag, "role:", e.role, "shouldDeliver:", shouldDeliver, "hasPTY:", ptyManager.has(tid));
+
+                if (!shouldDeliver) continue;
+
+                try {
+                  fs.appendFileSync(path.join(e.sessionDir, "inbox.jsonl"), JSON.stringify(scratchMsg) + "\n");
+                } catch {}
+
+                broadcast({
+                  type: "message:new",
+                  terminalId: tid,
+                  from: scratchMsg.from,
+                  tag: scratchMsg.tag,
+                  preview: scratchMsg.msg.slice(0, 80),
+                  msgType: scratchMsg.msgType,
+                  messageId: scratchMsg.id,
+                  taskId: scratchMsg.taskId,
+                  artifactPath: scratchMsg.artifactPath,
+                });
+
+                const urgentTypes = ["blocker", "handoff", "question"];
+                if (scratchMsg.msgType && urgentTypes.includes(scratchMsg.msgType)) {
+                  broadcast({
+                    type: "message:urgent",
+                    terminalId: tid,
+                    from: scratchMsg.from,
+                    msgType: scratchMsg.msgType,
+                    preview: scratchMsg.msg.slice(0, 80),
+                    messageId: scratchMsg.id,
+                  });
+                }
+
+                if (ptyManager.has(tid)) {
+                  const isCoordinator = e.role === "coordinator";
+                  const shouldPush = isCoordinator
+                    ? scratchMsg.msgType !== "status_update" || scratchMsg.from !== "system"
+                    : !!(scratchMsg.msgType && workerPushTypes.includes(scratchMsg.msgType));
+                  if (shouldPush) {
+                    if (Date.now() - ptyManager.getLastOutputTime(tid) > 2000) {
+                      ptyManager.write(tid, `You received a [${scratchMsg.msgType}] message from ${scratchMsg.from}: "${scratchMsg.msg.slice(0, 120)}". Run coagent inbox, read it, and act on it.\r`);
+                    } else {
+                      if (!pendingNotifications.has(tid)) pendingNotifications.set(tid, []);
+                      pendingNotifications.get(tid)!.push(scratchMsg);
+                    }
+                  }
+                }
+              }
+            });
           }
           watchedDirCounts.set(sharedDir, count + 1);
 
@@ -1765,13 +2276,13 @@ wss.on("connection", (ws: WebSocket) => {
           // Auto-resume the Claude/Codex session
           const provider = entry.provider ?? "claude";
           if (provider === "codex") {
-            setTimeout(() => { ptyManager.write(msg.terminalId, "codex\n"); }, 300);
+            setTimeout(() => { ptyManager.write(msg.terminalId, "codex\r"); }, 300);
           } else {
             // Use the stored Claude session UUID to bypass the interactive picker entirely.
             const uuid = entry.claudeSessionId;
             if (uuid) {
               setTimeout(() => {
-                ptyManager.write(msg.terminalId, `claude --model haiku --resume ${uuid}\n`);
+                ptyManager.write(msg.terminalId, `claude --model haiku --resume ${uuid}\r`);
               }, 300);
               // Watch PTY output for "No conversation found" — if resume fails, start fresh
               const termId = msg.terminalId;
@@ -1784,7 +2295,7 @@ wss.on("connection", (ws: WebSocket) => {
                     disposed = true;
                     disposable.dispose();
                     terminalRegistry.update(meta.folderPath, termId, { claudeSessionId: undefined });
-                    setTimeout(() => { ptyManager.write(termId, "claude --model haiku\n"); }, 200);
+                    setTimeout(() => { ptyManager.write(termId, "claude --model haiku\r"); }, 200);
                   }
                 });
                 // Always clean up after 6s
@@ -1792,7 +2303,7 @@ wss.on("connection", (ws: WebSocket) => {
               }
             } else {
               // No UUID — start fresh
-              setTimeout(() => { ptyManager.write(msg.terminalId, "claude --model haiku\n"); }, 300);
+              setTimeout(() => { ptyManager.write(msg.terminalId, "claude --model haiku\r"); }, 300);
             }
           }
           break;
@@ -1935,7 +2446,7 @@ coagent task done --id t1 --result "Done"
         try { fs.appendFileSync(scratchpadPath, promoMsg + "\n"); } catch {}
 
         // 9. Update PTY env vars
-        ptyManager.write(msg.terminalId, `export COAGENT_SESSION_DIR="${effectiveDir}" COAGENT_SESSION_NAME="${effectiveName}"\n`);
+        ptyManager.write(msg.terminalId, `export COAGENT_SESSION_DIR="${effectiveDir}" COAGENT_SESSION_NAME="${effectiveName}"\r`);
 
         send(ws, {
           type: "terminal:promoted",
@@ -2071,6 +2582,56 @@ coagent task done --id t1 --result "Done"
         }
         break;
       }
+
+      case "chat:send": {
+        const folder = registry.resolve(msg.pathId);
+        if (!folder) { console.log("[chat:send] folder not found for pathId:", msg.pathId); break; }
+        const sharedDir = path.join(folder.path, "CoAgent_workspace", "_shared");
+        const scratchpadPath = path.join(sharedDir, "scratchpad.jsonl");
+        console.log("[chat:send] writing to", scratchpadPath, "to:", msg.to, "msg:", msg.msg.slice(0, 60));
+        const entry = {
+          ts: new Date().toISOString(),
+          from: "user",
+          to: msg.to,
+          tag: msg.msgType ?? "task_assign",
+          msg: msg.msg,
+          ref: null,
+          id: crypto.randomUUID(),
+          msgType: msg.msgType ?? "task_assign",
+          status: "sent",
+        };
+        try {
+          fs.appendFileSync(scratchpadPath, JSON.stringify(entry) + "\n");
+          console.log("[chat:send] write succeeded");
+        } catch (e) {
+          console.error("[chat:send] write failed:", e);
+        }
+        break;
+      }
+
+      case "scratchpad:load": {
+        const folder = registry.resolve(msg.pathId);
+        if (!folder) break;
+        const filePath = path.join(folder.path, "CoAgent_workspace", "_shared", "scratchpad.jsonl");
+        try {
+          const lines = fs.readFileSync(filePath, "utf-8").split("\n");
+          const entries: ScratchpadEntry[] = [];
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed) continue;
+            try {
+              const parsed = JSON.parse(trimmed);
+              if (parsed.ts && parsed.from && parsed.to && parsed.tag && parsed.msg) {
+                entries.push(parsed as ScratchpadEntry);
+              }
+            } catch {}
+          }
+          send(ws, { type: "scratchpad:history", pathId: msg.pathId, entries });
+        } catch {
+          send(ws, { type: "scratchpad:history", pathId: msg.pathId, entries: [] });
+        }
+        break;
+      }
     }
   });
 
@@ -2087,7 +2648,7 @@ const notificationFlushTimer = setInterval(() => {
     const lastOutput = ptyManager.getLastOutputTime(tid);
     if (Date.now() - lastOutput > 3000) {
       const summary = msgs.map(m => `[${m.msgType}] from ${m.from}: ${m.msg.slice(0, 80)}`).join("; ");
-      const prompt = `You have ${msgs.length} new message(s): ${summary}. Run coagent inbox, read them, and act on each.\n`;
+      const prompt = `You have ${msgs.length} new message(s): ${summary}. Run coagent inbox, read them, and act on each.\r`;
       ptyManager.write(tid, prompt);
       pendingNotifications.delete(tid);
     }

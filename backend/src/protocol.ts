@@ -79,7 +79,7 @@ export type ClientMessage =
   | { type: "folder:remove"; pathId: string }
   | { type: "folder:list" }
   | { type: "fs:readdir"; path: string }
-  | { type: "terminal:create"; pathId: string; x: number; y: number; sessionType?: "claude" | "codex" | "coordinator"; provider?: "claude" | "codex"; mode?: "quick" | "role"; role?: string }
+  | { type: "terminal:create"; pathId: string; x: number; y: number; sessionType?: "claude" | "codex" | "coordinator"; provider?: "claude" | "codex"; mode?: "quick" | "role"; role?: string; title?: string }
   | { type: "folder:update_preset"; pathId: string; defaultProvider?: "claude" | "codex"; defaultMode?: "quick" | "role"; defaultRole?: string }
   | { type: "terminal:input"; terminalId: string; data: string }
   | { type: "terminal:resize"; terminalId: string; cols: number; rows: number }
@@ -92,7 +92,9 @@ export type ClientMessage =
   | { type: "usage:cost_request"; pathId: string }
   | { type: "usage:record"; pathId: string; terminalId: string; event: Record<string, unknown> }
   | { type: "artifact:list"; terminalId: string }
-  | { type: "artifact:read"; terminalId: string; fileName: string };
+  | { type: "artifact:read"; terminalId: string; fileName: string }
+  | { type: "chat:send"; pathId: string; to: string; msg: string; msgType?: string }
+  | { type: "scratchpad:load"; pathId: string };
 
 // Server -> Client
 export type ServerMessage =
@@ -102,7 +104,7 @@ export type ServerMessage =
   | { type: "folder:error"; message: string }
   | { type: "fs:readdir"; path: string; entries: DirEntry[] }
   | { type: "fs:error"; path: string; message: string }
-  | { type: "terminal:created"; terminalId: string; pathId: string; x: number; y: number; sessionType: string; sessionName: string; tag?: string; mode?: "quick" | "role"; provider?: "claude" | "codex" }
+  | { type: "terminal:created"; terminalId: string; pathId: string; x: number; y: number; sessionType: string; sessionName: string; tag?: string; mode?: "quick" | "role"; provider?: "claude" | "codex"; autoStarted?: boolean; title?: string }
   | { type: "folder:preset_updated"; pathId: string; folder: FolderEntry }
   | { type: "terminal:output"; terminalId: string; data: string }
   | { type: "terminal:exit"; terminalId: string; exitCode: number }
@@ -115,4 +117,17 @@ export type ServerMessage =
   | { type: "message:new"; terminalId: string; from: string; tag: string; preview: string; msgType?: string; messageId?: string; taskId?: string; artifactPath?: string }
   | { type: "message:urgent"; terminalId: string; from: string; msgType: string; preview: string; messageId?: string }
   | { type: "artifact:update"; terminalId: string; files: ArtifactFileInfo[] }
-  | { type: "artifact:content"; terminalId: string; fileName: string; content: string };
+  | { type: "artifact:content"; terminalId: string; fileName: string; content: string }
+  | { type: "scratchpad:history"; pathId: string; entries: ScratchpadEntry[] }
+  | { type: "scratchpad:message"; pathId: string; entry: ScratchpadEntry };
+
+export type ScratchpadEntry = {
+  ts: string;
+  from: string;
+  to: string;
+  tag: string;
+  msg: string;
+  msgType?: string;
+  id?: string;
+  ref?: string | null;
+};

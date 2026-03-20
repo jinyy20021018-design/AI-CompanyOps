@@ -13,10 +13,11 @@ import { TerminalWindow } from "./components/TerminalWindow";
 import { SpawnMenu, type SpawnOption } from "./components/SpawnMenu";
 import { ArtifactViewer } from "./components/ArtifactViewer";
 import { SettingsPanel, type CoordinatorEngine, type CanvasTheme } from "./components/SettingsPanel";
+import { ChatPanel } from "./components/ChatPanel";
 import { findFreePosition, arrangeTerminals, nudgeOverlaps } from "./utils/placement";
 // Shared
 import { TerminalPane } from "./components/TerminalPane";
-import type { FolderEntry, TerminalWindowModel, ServerMessage, CostSummary } from "./types";
+import type { FolderEntry, TerminalWindowModel, ServerMessage, CostSummary, ScratchpadEntry } from "./types";
 
 type LayoutMode = "structured" | "canvas";
 
@@ -38,6 +39,8 @@ export default function App() {
   const [folderError, setFolderError] = useState<string | null>(null);
   const [terminals, setTerminals] = useState<TerminalWindowModel[]>([]);
   const [showSettings, setShowSettings] = useState(false);
+  const [showChat, setShowChat] = useState(false);
+  const [scratchpadMessages, setScratchpadMessages] = useState<Record<string, ScratchpadEntry[]>>({});
   const [canvasTheme, setCanvasTheme] = useState<CanvasTheme>(
     () => (localStorage.getItem("canvasTheme") as CanvasTheme) || "dark"
   );
@@ -91,10 +94,13 @@ export default function App() {
   // Spawn coordinator helper
   const spawnCoordinator = useCallback((pathId: string) => {
     const engine = coordinatorEngineRef.current;
+    // Coordinator gets Bash + Read only — no WebSearch/WebFetch/Write/Edit.
+    // This forces it to delegate work via coagent spawn instead of doing it itself.
+    const toolRestriction = engine === "claude" ? " --allowedTools Bash,Read" : "";
     if (coordinatorHasExistedRef.current.has(pathId)) {
-      pendingCommandRef.current = `${engine} --model haiku --resume coordinator`;
+      pendingCommandRef.current = `${engine} --model haiku${toolRestriction} --resume coordinator`;
     } else {
-      pendingCommandRef.current = `${engine} --model haiku -n coordinator`;
+      pendingCommandRef.current = `${engine} --model haiku${toolRestriction} -n coordinator`;
       coordinatorHasExistedRef.current.add(pathId);
     }
     const sidebarW = sidebarCollapsed ? 48 : 280;
@@ -221,6 +227,8 @@ export default function App() {
           let title: string;
           if (isCoordinator) {
             title = "Coordinator";
+          } else if (msg.title) {
+            title = msg.title;
           } else {
             const provider = msg.provider ?? "claude";
             const key = `${msg.pathId}:${provider}`;
@@ -275,12 +283,12 @@ export default function App() {
           if (isCoordinator && pendingCommandRef.current) {
             cmd = pendingCommandRef.current;
             pendingCommandRef.current = null;
-          } else if (!isCoordinator) {
+          } else if (!isCoordinator && !msg.autoStarted) {
             cmd = msg.provider === "codex" ? "codex" : "claude --model haiku";
           }
           if (cmd) {
             setTimeout(() => {
-              send({ type: "terminal:input", terminalId: msg.terminalId, data: cmd + "\n" });
+              send({ type: "terminal:input", terminalId: msg.terminalId, data: cmd + "\r" });
             }, 300);
           }
           send({ type: "artifact:list", terminalId: msg.terminalId });
@@ -398,6 +406,17 @@ export default function App() {
             prev.map((f) => (f.id === msg.pathId ? msg.folder : f))
           );
           break;
+
+        case "scratchpad:history":
+          setScratchpadMessages((prev) => ({ ...prev, [msg.pathId]: msg.entries }));
+          break;
+
+        case "scratchpad:message":
+          setScratchpadMessages((prev) => ({
+            ...prev,
+            [msg.pathId]: [...(prev[msg.pathId] ?? []), msg.entry],
+          }));
+          break;
       }
     });
   }, [addHandler, send]);
@@ -429,6 +448,17 @@ export default function App() {
   const agents = terminals.filter((t) => t.pathId === activeId && t.tag !== "coordinator");
 
   // ── Shared callbacks ──────────────────────────────────
+
+  const handleChatSend = useCallback((to: string, msg: string, msgType: string) => {
+    if (!activeId) return;
+    send({ type: "chat:send", pathId: activeId, to, msg, msgType });
+  }, [send, activeId]);
+
+  useEffect(() => {
+    if (showChat && activeId) {
+      send({ type: "scratchpad:load", pathId: activeId });
+    }
+  }, [showChat, activeId, send]);
 
   const handleClose = useCallback((id: string) => {
     const target = terminalsRef.current.find((t) => t.id === id);
@@ -531,7 +561,12 @@ export default function App() {
 
   const handleNewAgent = useCallback(() => {
     if (!activeId) return;
-    send({ type: "terminal:create", pathId: activeId, x: 0, y: 0, provider: (activeFolder?.defaultProvider ?? "claude") as "claude" | "codex", mode: "role" });
+    const provider = (activeFolder?.defaultProvider ?? "claude") as "claude" | "codex";
+    const key = `${activeId}:${provider}`;
+    const count = (counterRef.current[key] ?? 0) + 1;
+    counterRef.current[key] = count;
+    const title = `${provider}-${count}`;
+    send({ type: "terminal:create", pathId: activeId, x: 0, y: 0, provider, mode: "role", title });
   }, [activeId, activeFolder, send]);
 
   const handleRename = useCallback((id: string, name: string) => {
@@ -557,7 +592,12 @@ export default function App() {
     const cy = spawnMenu?.canvasY ?? window.innerHeight / 2;
     pendingClickRef.current = { x: cx, y: cy };
     pendingCommandRef.current = null;
-    send({ type: "terminal:create", pathId: activeId, x: cx, y: cy, provider: option as "claude" | "codex", mode: "role" });
+    const provider = option as "claude" | "codex";
+    const key = `${activeId}:${provider}`;
+    const count = (counterRef.current[key] ?? 0) + 1;
+    counterRef.current[key] = count;
+    const title = `${provider}-${count}`;
+    send({ type: "terminal:create", pathId: activeId, x: cx, y: cy, provider, mode: "role", title });
     setSpawnMenu(null);
   }, [activeId, send, spawnMenu]);
 
@@ -635,6 +675,7 @@ export default function App() {
               }
             }}
             onOpenSettings={() => setShowSettings(true)}
+            onOpenChat={() => setShowChat(true)}
             send={send}
             layoutToggle={layoutToggle}
           />
@@ -672,6 +713,14 @@ export default function App() {
         {showSettings && (
           <SettingsPanel canvasTheme={canvasTheme} onCanvasThemeChange={setCanvasTheme} onCloseWorkers={handleCloseWorkers} workerCount={agents.length} onClose={() => setShowSettings(false)} />
         )}
+        {showChat && (
+          <ChatPanel
+            terminals={terminals.filter((t) => t.pathId === activeId && !t.exited)}
+            messages={scratchpadMessages[activeId ?? ""] ?? []}
+            onSend={handleChatSend}
+            onClose={() => setShowChat(false)}
+          />
+        )}
       </div>
     );
   }
@@ -703,6 +752,7 @@ export default function App() {
         <WorkspaceHeader
           activeFolder={activeFolder}
           onOpenSettings={() => setShowSettings(true)}
+          onOpenChat={() => setShowChat(true)}
           costSummary={costSummary}
           layoutToggle={layoutToggle}
         />
@@ -733,6 +783,14 @@ export default function App() {
         )}
         {showSettings && (
           <SettingsPanel canvasTheme={canvasTheme} onCanvasThemeChange={setCanvasTheme} onCloseWorkers={handleCloseWorkers} onArrange={terminals.filter((t) => t.pathId === activeId).length > 1 ? handleArrange : undefined} workerCount={agents.length} onClose={() => setShowSettings(false)} />
+        )}
+        {showChat && (
+          <ChatPanel
+            terminals={terminals.filter((t) => t.pathId === activeId && !t.exited)}
+            messages={scratchpadMessages[activeId ?? ""] ?? []}
+            onSend={handleChatSend}
+            onClose={() => setShowChat(false)}
+          />
         )}
       </div>
     </div>

@@ -158,6 +158,10 @@ export class PtyManager {
   }
 
   write(id: string, data: string): void {
+    // Normalize trailing \n to \r so PTY submissions never stall
+    if (data.endsWith("\n") && !data.endsWith("\r\n")) {
+      data = data.slice(0, -1) + "\r";
+    }
     this.sessions.get(id)?.process.write(data);
   }
 
