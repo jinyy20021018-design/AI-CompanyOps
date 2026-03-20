@@ -33,10 +33,11 @@ type Props = {
   activeFolder: FolderEntry | null;
   costSummary?: CostSummary | null;
   onOpenSettings: () => void;
+  onOpenChat?: () => void;
   layoutToggle?: React.ReactNode;
 };
 
-export function WorkspaceHeader({ activeFolder, costSummary, onOpenSettings, layoutToggle }: Props) {
+export function WorkspaceHeader({ activeFolder, costSummary, onOpenSettings, onOpenChat, layoutToggle }: Props) {
   const [showCostPanel, setShowCostPanel] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
 
@@ -130,6 +131,13 @@ export function WorkspaceHeader({ activeFolder, costSummary, onOpenSettings, lay
               </div>
             )}
           </div>
+        )}
+        {onOpenChat && (
+          <button className="workspace-header-chat-btn" onClick={onOpenChat} title="Chat with agents">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M2 2h12v9H9l-3 3v-3H2V2z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round"/>
+            </svg>
+          </button>
         )}
         <button className="workspace-header-settings-btn" onClick={onOpenSettings} title="Settings">
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">

@@ -32,6 +32,7 @@ export function AgentCard({ model, isFocused, viewMode, onClick, onClose, onRena
   const [expanded, setExpanded] = useState(true);
   const [editing, setEditing] = useState(false);
   const [nameInput, setNameInput] = useState(model.title);
+  const [showAllArtifacts, setShowAllArtifacts] = useState(false);
   const status = getAgentStatus(model);
   const dotColor = STATUS_COLORS[status];
   const skipTerminal = isFocused && viewMode === "focus";
@@ -105,7 +106,7 @@ export function AgentCard({ model, isFocused, viewMode, onClick, onClose, onRena
       {/* Artifact strip */}
       {model.artifacts && model.artifacts.length > 0 && (
         <div className="artifact-strip">
-          {model.artifacts.slice(0, 3).map((f) => (
+          {(showAllArtifacts ? model.artifacts : model.artifacts.slice(0, 3)).map((f) => (
             <button
               key={f.name}
               className="artifact-pill"
@@ -119,7 +120,13 @@ export function AgentCard({ model, isFocused, viewMode, onClick, onClose, onRena
             </button>
           ))}
           {model.artifacts.length > 3 && (
-            <span className="artifact-pill-overflow">+{model.artifacts.length - 3}</span>
+            <button
+              className="artifact-pill-overflow"
+              onClick={(e) => { e.stopPropagation(); setShowAllArtifacts(!showAllArtifacts); }}
+              title={showAllArtifacts ? "Show less" : "Show all artifacts"}
+            >
+              {showAllArtifacts ? "−" : `+${model.artifacts.length - 3}`}
+            </button>
           )}
         </div>
       )}

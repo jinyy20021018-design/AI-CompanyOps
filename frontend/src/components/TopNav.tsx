@@ -41,13 +41,14 @@ type Props = {
   viewMode: "overview" | "focus";
   onViewModeChange: (mode: "overview" | "focus") => void;
   onOpenSettings: () => void;
+  onOpenChat?: () => void;
   send: (msg: ClientMessage) => void;
   layoutToggle?: React.ReactNode;
 };
 
 export function TopNav({
   folders, activeFolder, activeId, onSelectFolder, onAddFolder, onRemoveFolder, folderError,
-  costSummary, viewMode, onViewModeChange, onOpenSettings, send, layoutToggle,
+  costSummary, viewMode, onViewModeChange, onOpenSettings, onOpenChat, send, layoutToggle,
 }: Props) {
   const [showCostPanel, setShowCostPanel] = useState(false);
   const [showAddFolder, setShowAddFolder] = useState(false);
@@ -289,6 +290,13 @@ export function TopNav({
               </div>
             )}
           </div>
+        )}
+        {onOpenChat && (
+          <button className="top-nav-chat-btn" onClick={onOpenChat} title="Chat with agents">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M2 2h12v9H9l-3 3v-3H2V2z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round"/>
+            </svg>
+          </button>
         )}
         <button
           className="top-nav-theme-btn"
