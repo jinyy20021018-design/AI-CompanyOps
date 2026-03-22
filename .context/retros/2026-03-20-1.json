@@ -1,0 +1,35 @@
+{
+  "date": "2026-03-20",
+  "window": "7d",
+  "metrics": {
+    "commits": 3,
+    "contributors": 1,
+    "prs_merged": 0,
+    "insertions": 15422,
+    "deletions": 1478,
+    "net_loc": 13944,
+    "test_loc": 0,
+    "test_ratio": 0,
+    "active_days": 3,
+    "sessions": 3,
+    "deep_sessions": 0,
+    "avg_session_minutes": 0,
+    "loc_per_session_hour": 0,
+    "feat_pct": 1.0,
+    "fix_pct": 0,
+    "peak_hour": 20,
+    "ai_assisted_commits": 2
+  },
+  "authors": {
+    "Lucine": {
+      "commits": 3,
+      "insertions": 15422,
+      "deletions": 1478,
+      "test_ratio": 0,
+      "top_area": "backend/src/"
+    }
+  },
+  "version_range": ["0.0.0", "0.0.0"],
+  "streak_days": 2,
+  "tweetable": "Week of Mar 13: 3 commits, 15.4k LOC, 0% tests, 0 PRs, peak: 8pm | Streak: 2d | 67% AI-assisted"
+}

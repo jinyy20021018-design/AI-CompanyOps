@@ -135,17 +135,14 @@ export function AgentCard({ model, isFocused, viewMode, onClick, onClose, onRena
       <div className="agent-card-footer">
         {model.tag !== "coordinator" && (
           <>
-            {model.mode !== "role" && !model.promoted && !model.exited && (
+            {!model.exited && (
               <button
-                className="agent-card-pin"
+                className={model.promoted ? "agent-card-pinned" : "agent-card-pin"}
                 onClick={(e) => { e.stopPropagation(); onPromote(model.id); }}
-                title="Pin — keep after refresh"
+                title={model.promoted ? "Unpin — revert to ephemeral" : "Pin — keep after refresh"}
               >
-                Pin
+                {model.promoted ? "Unpin" : "Pin"}
               </button>
-            )}
-            {model.promoted && (
-              <span className="agent-card-pinned" title="Pinned — persists after refresh">Pinned</span>
             )}
             {!model.exited && (
               <button
