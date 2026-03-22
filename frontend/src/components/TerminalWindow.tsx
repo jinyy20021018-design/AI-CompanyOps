@@ -120,7 +120,7 @@ export function TerminalWindow({
 
   return (
     <div
-      className={`terminal-window${isCoordinator ? " terminal-window-coordinator" : ""}${model.exited ? " state-exited" : model.active ? " state-active" : " state-idle"}${model.needsAttention ? " state-attention" : ""}`}
+      className={`terminal-window${isCoordinator ? " terminal-window-coordinator" : ""}${model.exited ? " state-exited" : model.waitingForHuman ? " state-waiting" : model.active ? " state-active" : " state-idle"}${model.needsAttention ? " state-attention" : ""}`}
       style={{
         left: model.x,
         top: model.y,
@@ -165,25 +165,17 @@ export function TerminalWindow({
         {(model.unreadCount ?? 0) > 0 && (
           <span className="terminal-window-badge">{model.unreadCount}</span>
         )}
-        {!isCoordinator && model.mode !== "role" && !model.promoted && !model.exited && (
+        {!isCoordinator && !model.exited && (
           <button
-            className="terminal-window-pin-btn"
+            className={model.promoted ? "terminal-window-pinned" : "terminal-window-pin-btn"}
             onClick={(e) => { e.stopPropagation(); onPromote?.(model.id); }}
-            title="Pin — keep this terminal after refresh"
+            title={model.promoted ? "Unpin — revert to ephemeral" : "Pin — keep this terminal after refresh"}
           >
             <svg width="11" height="11" viewBox="0 0 11 11" fill="none">
-              <path d="M7 1L10 4L6.5 5.5L5 9L2 6L3.5 4.5L1 1L7 1Z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round"/>
+              <path d="M7 1L10 4L6.5 5.5L5 9L2 6L3.5 4.5L1 1L7 1Z" fill={model.promoted ? "currentColor" : "none"} stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round"/>
               <line x1="2" y1="9" x2="0.5" y2="10.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
             </svg>
           </button>
-        )}
-        {!isCoordinator && model.promoted && (
-          <span className="terminal-window-pinned" title="Pinned — persists after refresh">
-            <svg width="11" height="11" viewBox="0 0 11 11" fill="none">
-              <path d="M7 1L10 4L6.5 5.5L5 9L2 6L3.5 4.5L1 1L7 1Z" fill="currentColor" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round"/>
-              <line x1="2" y1="9" x2="0.5" y2="10.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
-            </svg>
-          </span>
         )}
         {!isCoordinator && (
           <button

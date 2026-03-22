@@ -976,8 +976,19 @@ html, body, #root {
   font-size: 10px;
   font-weight: 600;
   color: var(--accent);
+  background: var(--accent-muted);
+  border: 1px solid var(--border-accent);
+  border-radius: 4px;
+  padding: 2px 7px;
+  cursor: pointer;
   letter-spacing: 0.02em;
-  opacity: 0.7;
+  opacity: 0.85;
+  transition: background 0.1s, opacity 0.1s;
+}
+
+.agent-card-pinned:hover {
+  opacity: 1;
+  background: var(--accent-muted-hover);
 }
 
 .agent-card-kill,
@@ -2134,6 +2145,14 @@ html, body, #root {
   background: var(--accent-muted);
 }
 
+.terminal-window-pin-btn:active,
+.terminal-window-pinned:active {
+  color: var(--accent-strong);
+  background: var(--accent-muted-hover);
+  transform: scale(1.2);
+  transition: transform 0.1s, color 0.05s, background 0.05s;
+}
+
 .terminal-window-pinned {
   color: var(--accent);
   opacity: 0.8;
@@ -2141,6 +2160,15 @@ html, body, #root {
   align-items: center;
   padding: 0 4px;
   flex-shrink: 0;
+  cursor: pointer;
+  background: none;
+  border: none;
+  font-family: inherit;
+  transition: opacity 0.1s;
+}
+
+.terminal-window-pinned:hover {
+  opacity: 1;
 }
 
 /* Close cross (top right) */
@@ -2936,6 +2964,33 @@ html, body, #root {
     0 0 12px rgba(247,118,142,0.15),
     0 4px 6px -2px rgba(0,0,0,0.4),
     0 16px 40px -8px rgba(0,0,0,0.5);
+}
+
+/* Waiting for human input — pulsing red glow */
+.terminal-window.state-waiting {
+  border-top: 2px solid var(--red);
+  animation: pulse-waiting 1.5s ease-in-out infinite;
+}
+
+.terminal-window.state-waiting .terminal-window-titlebar {
+  background: color-mix(in srgb, var(--red) 8%, var(--bg-elevated));
+}
+
+@keyframes pulse-waiting {
+  0%, 100% {
+    box-shadow:
+      0 0 0 1px rgba(247,118,142,0.12),
+      0 0 8px rgba(247,118,142,0.10),
+      0 4px 6px -2px rgba(0,0,0,0.4),
+      0 16px 40px -8px rgba(0,0,0,0.5);
+  }
+  50% {
+    box-shadow:
+      0 0 0 2px rgba(247,118,142,0.25),
+      0 0 20px rgba(247,118,142,0.25),
+      0 4px 6px -2px rgba(0,0,0,0.4),
+      0 16px 40px -8px rgba(0,0,0,0.5);
+  }
 }
 
 .terminal-window.state-attention .terminal-window-titlebar {

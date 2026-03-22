@@ -89,6 +89,7 @@ export type ClientMessage =
   | { type: "terminal:update"; terminalId: string; x: number; y: number; width: number; height: number; title?: string }
   | { type: "session:list"; pathId: string }
   | { type: "terminal:promote"; terminalId: string; role?: string; name?: string }
+  | { type: "terminal:demote"; terminalId: string }
   | { type: "usage:cost_request"; pathId: string }
   | { type: "usage:record"; pathId: string; terminalId: string; event: Record<string, unknown> }
   | { type: "artifact:list"; terminalId: string }
@@ -114,6 +115,7 @@ export type ServerMessage =
   | { type: "session:list"; pathId: string; sessions: SessionHistoryEntry[] }
   | { type: "usage:cost_summary"; pathId: string; summary: CostSummary }
   | { type: "terminal:promoted"; terminalId: string; mode: "role"; persistence: "persistent"; tag?: string; newName?: string; newSessionName?: string }
+  | { type: "terminal:demoted"; terminalId: string }
   | { type: "message:new"; terminalId: string; from: string; tag: string; preview: string; msgType?: string; messageId?: string; taskId?: string; artifactPath?: string }
   | { type: "message:urgent"; terminalId: string; from: string; msgType: string; preview: string; messageId?: string }
   | { type: "artifact:update"; terminalId: string; files: ArtifactFileInfo[] }

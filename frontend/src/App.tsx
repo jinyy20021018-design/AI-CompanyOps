@@ -62,6 +62,8 @@ export default function App() {
   const terminalsRef = useRef<TerminalWindowModel[]>([]);
   const pendingCommandRef = useRef<string | null>(null);
   const activityTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const outputBuffers = useRef<Record<string, string>>({});
+  const humanWaitTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 
   const coordinatorEngineRef = useRef<CoordinatorEngine>("claude");
   const canvasRef = useRef<TerminalCanvasHandle>(null);
@@ -296,10 +298,41 @@ export default function App() {
         }
 
         case "terminal:output": {
+          // Clear waitingForHuman when new output arrives (human responded)
           setTerminals((prev) =>
-            prev.map((t) => (t.id === msg.terminalId ? { ...t, active: true } : t))
+            prev.map((t) => (t.id === msg.terminalId ? { ...t, active: true, waitingForHuman: false } : t))
           );
           clearTimeout(activityTimers.current[msg.terminalId]);
+          clearTimeout(humanWaitTimers.current[msg.terminalId]);
+
+          // Buffer last 500 chars for pattern detection
+          const buf = (outputBuffers.current[msg.terminalId] ?? "") + msg.data;
+          outputBuffers.current[msg.terminalId] = buf.slice(-500);
+
+          // After output settles (2s idle), check if Claude is waiting for human
+          humanWaitTimers.current[msg.terminalId] = setTimeout(() => {
+            const recent = outputBuffers.current[msg.terminalId] ?? "";
+            // Strip ANSI escape codes for pattern matching
+            const clean = recent.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "").replace(/\x1b\][^\x07]*\x07/g, "");
+            const waitingPatterns = [
+              /\(y\/n\)\s*$/,
+              /\(Y\/n\)\s*$/,
+              /\[Y\/n\]\s*$/,
+              /\[yes\/no\]\s*$/i,
+              /Do you want to proceed/i,
+              /Allow\s+.*\?/i,
+              /Press Enter to continue/i,
+              /waiting for (?:your |user )?(?:input|response|confirmation)/i,
+              /\?\s*$/,
+            ];
+            const isWaiting = waitingPatterns.some((p) => p.test(clean.trim()));
+            if (isWaiting) {
+              setTerminals((prev) =>
+                prev.map((t) => (t.id === msg.terminalId && !t.exited ? { ...t, waitingForHuman: true } : t))
+              );
+            }
+          }, 2000);
+
           activityTimers.current[msg.terminalId] = setTimeout(() => {
             setTerminals((prev) =>
               prev.map((t) => (t.id === msg.terminalId ? { ...t, active: false } : t))
@@ -310,9 +343,12 @@ export default function App() {
 
         case "terminal:exit":
           clearTimeout(activityTimers.current[msg.terminalId]);
+          clearTimeout(humanWaitTimers.current[msg.terminalId]);
           delete activityTimers.current[msg.terminalId];
+          delete humanWaitTimers.current[msg.terminalId];
+          delete outputBuffers.current[msg.terminalId];
           setTerminals((prev) =>
-            prev.map((t) => t.id === msg.terminalId ? { ...t, active: false, exited: true, exitCode: msg.exitCode } : t)
+            prev.map((t) => t.id === msg.terminalId ? { ...t, active: false, exited: true, exitCode: msg.exitCode, waitingForHuman: false } : t)
           );
           break;
 
@@ -327,6 +363,15 @@ export default function App() {
                   ...(msg.tag ? { tag: msg.tag } : {}),
                   ...(msg.newSessionName ? { sessionName: msg.newSessionName } : {}),
                 }
+              : t
+            )
+          );
+          break;
+
+        case "terminal:demoted":
+          setTerminals((prev) =>
+            prev.map((t) => t.id === msg.terminalId
+              ? { ...t, mode: "quick", promoted: false }
               : t
             )
           );
@@ -576,7 +621,12 @@ export default function App() {
   }, [send]);
 
   const handlePromote = useCallback((id: string) => {
-    send({ type: "terminal:promote", terminalId: id });
+    const t = terminalsRef.current.find((t) => t.id === id);
+    if (t?.promoted) {
+      send({ type: "terminal:demote", terminalId: id });
+    } else {
+      send({ type: "terminal:promote", terminalId: id });
+    }
   }, [send]);
 
   // ── Canvas mode callbacks ─────────────────────────────
