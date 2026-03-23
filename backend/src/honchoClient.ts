@@ -7,6 +7,7 @@ export function getHoncho(): Honcho {
     _honcho = new Honcho({
       workspaceId: "terminal-canvas",
       apiKey: process.env.HONCHO_API_KEY,
+      baseURL: process.env.HONCHO_BASE_URL || "https://api.honcho.dev",
     });
   }
   return _honcho;
