@@ -1,0 +1,16 @@
+{
+  "summary": "The submitted artifacts are broadly consistent and cover the core requirements of the user request. Only minor clarifications are recommended.",
+  "confidence": "high",
+  "issues": [
+    {
+      "severity": "minor",
+      "criterion": "clarity",
+      "sourceAgents": [
+        "finance"
+      ],
+      "title": "Break-even assumptions could be more explicit",
+      "evidence": "The finance report cites an 18-month break-even target but does not show the underlying customer volume assumptions.",
+      "recommendation": "Add the expected user acquisition volume and premium subscriber count required to hit break-even."
+    }
+  ]
+}

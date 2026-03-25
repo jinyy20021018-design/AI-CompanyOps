@@ -1,0 +1,15 @@
+{
+  "userRequest": "Design an AI fitness app for busy professionals who want personalized workout and nutrition guidance.",
+  "artifacts": {
+    "product": {
+      "agent": "product",
+      "format": "markdown",
+      "version": "v0.1",
+      "content": "# Product Notes\n\nA possible app for wellness support.\n"
+    }
+  },
+  "options": {
+    "mode": "mock",
+    "outputFormat": "json"
+  }
+}

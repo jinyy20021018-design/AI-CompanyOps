@@ -1,0 +1,18 @@
+{
+  "summary": "The submission is incomplete and cannot support final proposal integration without additional artifacts and structured content.",
+  "confidence": "high",
+  "issues": [
+    {
+      "severity": "blocker",
+      "criterion": "completeness",
+      "sourceAgents": [
+        "product",
+        "engineering",
+        "finance"
+      ],
+      "title": "Critical artifacts are missing",
+      "evidence": "Engineering and finance artifacts are absent, and the product artifact lacks required sections for feature, success, and acceptance definitions.",
+      "recommendation": "Provide engineering and finance outputs and expand the product document to the agreed structure before QA approval."
+    }
+  ]
+}

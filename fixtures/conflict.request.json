@@ -1,0 +1,27 @@
+{
+  "userRequest": "Design an AI fitness app for busy professionals who want personalized workout and nutrition guidance.",
+  "artifacts": {
+    "product": {
+      "agent": "product",
+      "format": "markdown",
+      "version": "v0.1",
+      "content": "# Product Requirements Document\n\n## User Segment\nBusy professionals seeking fast mobile-first fitness planning.\n\n## Core Features\n- AI workout planner\n- Nutrition recommendations\n- Reminder notifications\n\n## Success Criteria\n- 30-day retention above 35%\n\n## Acceptance Criteria\n- Users can generate plans in under 30 seconds\n- Users can receive mobile reminders\n"
+    },
+    "engineering": {
+      "agent": "engineering",
+      "format": "markdown",
+      "version": "v0.1",
+      "content": "# Technical Architecture\n\n## Architecture\nOn-premise kiosk deployment for gym branches with no mobile application.\n\n## Components\n- Touchscreen kiosk frontend\n- Local server and database\n\n## Data Flow and API\nFitness plans are generated on a branch kiosk after staff input user details manually.\n\n## Technical Risks and Constraints\n- No push notification support in the current architecture\n- Limited ability to integrate external model APIs because the branch network is isolated\n- Hardware maintenance costs are high\n"
+    },
+    "finance": {
+      "agent": "finance",
+      "format": "markdown",
+      "version": "v0.1",
+      "content": "# Commercial and Financial Report\n\n## Target Market\nBudget-conscious gym operators rather than end users.\n\n## Cost Structure\n- Kiosk hardware procurement\n- Local IT maintenance\n- Branch installation costs\n\n## Revenue Assumptions\n- Revenue comes from kiosk leasing to gyms\n\n## ROI and Break-even\nThe business is expected to break even in 36 months if gyms adopt the kiosk network at scale.\n"
+    }
+  },
+  "options": {
+    "mode": "mock",
+    "outputFormat": "json"
+  }
+}

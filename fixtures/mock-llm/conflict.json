@@ -1,0 +1,28 @@
+{
+  "summary": "The artifacts contain major strategic conflicts across target audience, delivery model, and technical feasibility. Revision is required before integration.",
+  "confidence": "high",
+  "issues": [
+    {
+      "severity": "major",
+      "criterion": "consistency",
+      "sourceAgents": [
+        "product",
+        "engineering"
+      ],
+      "title": "Engineering delivery model contradicts product direction",
+      "evidence": "The product artifact assumes a mobile-first app while the engineering artifact proposes an on-premise kiosk deployment with no mobile application.",
+      "recommendation": "Align the engineering architecture with the mobile app scope or revise the product requirements to reflect kiosk delivery."
+    },
+    {
+      "severity": "major",
+      "criterion": "alignment",
+      "sourceAgents": [
+        "product",
+        "finance"
+      ],
+      "title": "Finance target market diverges from user request",
+      "evidence": "The user request and product output focus on busy professionals, but the finance output targets gym operators as the paying customer.",
+      "recommendation": "Update the commercial strategy to match the intended end-user persona or formally redefine the business model."
+    }
+  ]
+}

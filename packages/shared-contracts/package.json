@@ -1,0 +1,6 @@
+{
+  "name": "@qa-agent/shared-contracts",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts"
+}
