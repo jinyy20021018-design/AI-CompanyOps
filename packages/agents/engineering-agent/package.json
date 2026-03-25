@@ -1,5 +1,5 @@
 {
-  "name": "@qa-agent/shared-contracts",
+  "name": "@ai-companyops/engineering-agent",
   "private": true,
   "type": "module",
   "main": "src/index.ts"

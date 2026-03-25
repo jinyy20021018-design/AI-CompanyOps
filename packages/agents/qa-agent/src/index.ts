@@ -1,5 +1,5 @@
-import { ReviewRequestSchema } from "../../shared-contracts/src/index.js";
-import type { QaReviewReport, ReviewRequest } from "../../shared-contracts/src/index.js";
+import { ReviewRequestSchema } from "../../../shared/contracts/src/index.js";
+import type { QaReviewReport, ReviewRequest } from "../../../shared/contracts/src/index.js";
 import type {
   LlmReviewResult,
   NormalizedArtifacts,

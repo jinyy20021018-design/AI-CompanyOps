@@ -1,4 +1,4 @@
-import type { AgentName } from "../../../shared-contracts/src/index.js";
+import type { AgentName } from "../../../../shared/contracts/src/index.js";
 import type { NormalizedArtifact } from "../internalTypes.js";
 
 export function buildArtifactReviewerPrompt(userRequest: string, artifact: NormalizedArtifact): string {

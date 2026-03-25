@@ -3,8 +3,8 @@ import type {
   QaScorecard,
   ReviewCriterion,
   ReviewStatus
-} from "../../shared-contracts/src/index.js";
-import { REVIEW_CRITERIA, SCORE_DEDUCTIONS } from "../../shared-contracts/src/index.js";
+} from "../../../shared/contracts/src/index.js";
+import { REVIEW_CRITERIA, SCORE_DEDUCTIONS } from "../../../shared/contracts/src/index.js";
 
 function clampScore(value: number): number {
   return Math.max(0, Math.min(20, value));

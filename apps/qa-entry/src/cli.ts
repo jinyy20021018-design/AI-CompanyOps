@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
-import { renderMarkdownReport, reviewQaRequest } from "../../../packages/qa-agent/src/index.js";
-import type { OutputFormat } from "../../../packages/shared-contracts/src/index.js";
+import { renderMarkdownReport, reviewQaRequest } from "../../../packages/agents/qa-agent/src/index.js";
+import type { OutputFormat } from "../../../packages/shared/contracts/src/index.js";
 import { loadEnv } from "./loadEnv.js";
 
 export interface CliResult {

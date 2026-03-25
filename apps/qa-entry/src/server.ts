@@ -1,6 +1,6 @@
 import Fastify from "fastify";
 import { ZodError } from "zod";
-import { reviewQaRequest } from "../../../packages/qa-agent/src/index.js";
+import { reviewQaRequest } from "../../../packages/agents/qa-agent/src/index.js";
 import type { AppEnv } from "./loadEnv.js";
 
 export function buildServer(env: AppEnv) {

@@ -1,4 +1,4 @@
-import type { AgentArtifact } from "../../shared-contracts/src/index.js";
+import type { AgentArtifact } from "../../../shared/contracts/src/index.js";
 import type { NormalizedArtifact, NormalizedArtifacts } from "./internalTypes.js";
 import { cleanText, getSectionHeadings } from "./utils.js";
 

@@ -4,7 +4,7 @@ import type {
   ArtifactFormat,
   QaIssue,
   ReviewCriterion
-} from "../../shared-contracts/src/index.js";
+} from "../../../shared/contracts/src/index.js";
 
 export interface NormalizedArtifact {
   agent: AgentName;

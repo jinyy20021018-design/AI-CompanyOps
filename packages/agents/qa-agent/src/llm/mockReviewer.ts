@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
-import { IssueSeveritySchema, ReviewCriterionSchema } from "../../../shared-contracts/src/index.js";
-import type { ReviewRequest } from "../../../shared-contracts/src/index.js";
+import { IssueSeveritySchema, ReviewCriterionSchema } from "../../../../shared/contracts/src/index.js";
+import type { ReviewRequest } from "../../../../shared/contracts/src/index.js";
 import type { LlmReviewResult, NormalizedArtifacts, ReviewIssueDraft } from "../internalTypes.js";
 
 function inferScenario(request: ReviewRequest, artifacts: NormalizedArtifacts): string {
@@ -39,7 +39,7 @@ function normalizeDraft(issue: Omit<ReviewIssueDraft, "sourceAgents"> & { source
 
 export async function runMockReview(request: ReviewRequest, artifacts: NormalizedArtifacts): Promise<LlmReviewResult> {
   const scenario = inferScenario(request, artifacts);
-  const fileUrl = new URL(`../../../../fixtures/mock-llm/${scenario}.json`, import.meta.url);
+  const fileUrl = new URL(`../../../../../fixtures/mock-llm/${scenario}.json`, import.meta.url);
   const raw = await readFile(fileUrl, "utf8");
   const parsed = JSON.parse(raw) as {
     summary: string;

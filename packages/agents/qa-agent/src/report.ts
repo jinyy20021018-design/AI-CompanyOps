@@ -1,5 +1,5 @@
-import type { QaIssue, QaReviewReport, ReviewRequest } from "../../shared-contracts/src/index.js";
-import { QaReviewReportSchema } from "../../shared-contracts/src/index.js";
+import type { QaIssue, QaReviewReport, ReviewRequest } from "../../../shared/contracts/src/index.js";
+import { QaReviewReportSchema } from "../../../shared/contracts/src/index.js";
 import type { LlmReviewResult, ReviewIssueDraft } from "./internalTypes.js";
 import { calculateScorecard, determineStatus } from "./scoring.js";
 

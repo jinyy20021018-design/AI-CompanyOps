@@ -4,7 +4,7 @@ import missingSections from "../fixtures/missing-sections.request.json" with { t
 import { runCli } from "../apps/qa-entry/src/cli.js";
 import { buildServer } from "../apps/qa-entry/src/server.js";
 import { loadEnv } from "../apps/qa-entry/src/loadEnv.js";
-import { ReviewRequestSchema } from "../packages/shared-contracts/src/index.js";
+import { ReviewRequestSchema } from "../packages/shared/contracts/src/index.js";
 
 const conflictRequest = ReviewRequestSchema.parse(conflictPath);
 const missingRequest = ReviewRequestSchema.parse(missingSections);

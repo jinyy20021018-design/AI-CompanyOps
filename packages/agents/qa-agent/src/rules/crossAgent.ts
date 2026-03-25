@@ -1,4 +1,4 @@
-import type { AgentName } from "../../../shared-contracts/src/index.js";
+import type { AgentName } from "../../../../shared/contracts/src/index.js";
 import type { NormalizedArtifact, NormalizedArtifacts, ReviewBundle, ReviewIssueDraft } from "../internalTypes.js";
 import { dedupeStrings, extractBulletItems, extractKeywords, findSectionContent } from "../utils.js";
 

@@ -1,7 +1,7 @@
 import { Agent } from "@mariozechner/pi-agent-core";
 import { getModel } from "@mariozechner/pi-ai";
 import { z } from "zod";
-import type { ReviewRequest } from "../../../shared-contracts/src/index.js";
+import type { ReviewRequest } from "../../../../shared/contracts/src/index.js";
 import { buildCrossAgentAuditorPrompt } from "../prompts/crossAgentAuditor.js";
 import { buildArtifactReviewerPrompt } from "../prompts/artifactReviewer.js";
 import type { LlmReviewResult, NormalizedArtifact, NormalizedArtifacts, ReviewRuntimeConfig } from "../internalTypes.js";

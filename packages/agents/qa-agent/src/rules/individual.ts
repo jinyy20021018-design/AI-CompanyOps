@@ -1,4 +1,4 @@
-import type { AgentName } from "../../../shared-contracts/src/index.js";
+import type { AgentName } from "../../../../shared/contracts/src/index.js";
 import type {
   NormalizedArtifact,
   RequiredSection,

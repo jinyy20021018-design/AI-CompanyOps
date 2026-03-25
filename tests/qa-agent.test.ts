@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import happyPath from "../fixtures/happy-path.request.json" with { type: "json" };
 import missingSections from "../fixtures/missing-sections.request.json" with { type: "json" };
-import { ReviewRequestSchema } from "../packages/shared-contracts/src/index.js";
-import { reviewQaRequest } from "../packages/qa-agent/src/index.js";
-import { normalizeArtifacts } from "../packages/qa-agent/src/normalize.js";
-import { reviewIndividualArtifacts } from "../packages/qa-agent/src/rules/individual.js";
+import { ReviewRequestSchema } from "../packages/shared/contracts/src/index.js";
+import { reviewQaRequest } from "../packages/agents/qa-agent/src/index.js";
+import { normalizeArtifacts } from "../packages/agents/qa-agent/src/normalize.js";
+import { reviewIndividualArtifacts } from "../packages/agents/qa-agent/src/rules/individual.js";
 
 const happyRequest = ReviewRequestSchema.parse(happyPath);
 const missingRequest = ReviewRequestSchema.parse(missingSections);

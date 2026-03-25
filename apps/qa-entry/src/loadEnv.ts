@@ -1,5 +1,5 @@
 import { config as loadDotenv } from "dotenv";
-import type { ReviewRuntimeConfig } from "../../../packages/qa-agent/src/internalTypes.js";
+import type { ReviewRuntimeConfig } from "../../../packages/agents/qa-agent/src/internalTypes.js";
 
 export interface AppEnv extends ReviewRuntimeConfig {
   port: number;

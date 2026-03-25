@@ -2,12 +2,13 @@
 
 Course project repository for the AI CompanyOps Multi-Agent System. The overall system is designed around a CEO Agent coordinating Product, Engineering, Finance, and QA agents to generate an integrated business proposal from a high-level user request.
 
-This repository currently includes the first implemented module: the QA Agent. The QA Agent reviews Product, Engineering, and Finance outputs, checks cross-agent consistency, and returns a structured QA review report. Other agents can be added into the same repository later.
+This repository is organized as an agent-oriented monorepo. The QA Agent is currently implemented. CEO, Product, Engineering, and Finance are included as contract skeleton packages so the repository structure already matches the final multi-agent design.
 
 ## Current Repository Status
 
 - Project repository for the full multi-agent system
 - QA Agent implemented and runnable
+- CEO, Product, Engineering, and Finance packages scaffolded as skeletons
 - Mock fixtures included for Product, Engineering, and Finance outputs
 - CLI and HTTP API available for QA review
 - Live LLM review path prepared through `pi-agent-core` and `pi-ai`
@@ -24,16 +25,48 @@ This repository currently includes the first implemented module: the QA Agent. T
 
 ## Repository Structure
 
-- `packages/shared-contracts`
-  Shared schemas, constants, and types
-- `packages/qa-agent`
-  QA Agent core logic, rules, prompts, scoring, and report generation
+```text
+packages/
+  agents/
+    ceo-agent/
+    product-agent/
+    engineering-agent/
+    finance-agent/
+    qa-agent/
+  shared/
+    contracts/
+apps/
+  qa-entry/
+fixtures/
+tests/
+```
+
+- `packages/agents/qa-agent`
+  Implemented QA Agent runtime and review logic
+- `packages/agents/ceo-agent`
+  CEO orchestration contract skeleton
+- `packages/agents/product-agent`
+  Product artifact contract skeleton
+- `packages/agents/engineering-agent`
+  Engineering artifact contract skeleton
+- `packages/agents/finance-agent`
+  Finance artifact contract skeleton
+- `packages/shared/contracts`
+  Shared schemas, constants, and types used across agents
 - `apps/qa-entry`
-  CLI and Fastify API entrypoints
+  Current CLI and Fastify API entrypoint for the QA Agent demo flow
 - `fixtures`
-  Sample requests and mock LLM outputs for demo and testing
+  Sample requests and mock LLM outputs
 - `tests`
-  Unit and integration tests
+  Unit and integration tests for the implemented QA flow
+
+## Agent Status
+
+- CEO Agent: skeleton package, no runtime implementation yet
+- Product Agent: skeleton package, no runtime implementation yet
+- Engineering Agent: skeleton package, no runtime implementation yet
+- Finance Agent: skeleton package, no runtime implementation yet
+- QA Agent: implemented and runnable
 
 ## Install
 
@@ -119,4 +152,5 @@ Response body matches `QaReviewReport`:
 
 - This repository is intended for the full project, not only the QA module.
 - The current implemented vertical slice is the QA Agent.
+- `apps/qa-entry` is the current QA demo entrypoint, not the final full-system orchestration app.
 - The existing contracts are designed so a future CEO Agent or orchestration layer can call the QA module directly.

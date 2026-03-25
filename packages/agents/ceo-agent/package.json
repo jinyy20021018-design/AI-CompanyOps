@@ -1,5 +1,5 @@
 {
-  "name": "@ai-companyops/qa-entry",
+  "name": "@ai-companyops/ceo-agent",
   "private": true,
   "type": "module",
   "main": "src/index.ts"
