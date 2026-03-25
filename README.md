@@ -1,8 +1,18 @@
-# QA Agent v1
+# AI CompanyOps Multi-Agent System
 
-Independent QA Agent for the AI CompanyOps multi-agent proposal. This project reviews Product, Engineering, and Finance outputs, checks cross-agent consistency, and returns a structured QA review report.
+Course project repository for the AI CompanyOps Multi-Agent System. The overall system is designed around a CEO Agent coordinating Product, Engineering, Finance, and QA agents to generate an integrated business proposal from a high-level user request.
 
-## Stack
+This repository currently includes the first implemented module: the QA Agent. The QA Agent reviews Product, Engineering, and Finance outputs, checks cross-agent consistency, and returns a structured QA review report. Other agents can be added into the same repository later.
+
+## Current Repository Status
+
+- Project repository for the full multi-agent system
+- QA Agent implemented and runnable
+- Mock fixtures included for Product, Engineering, and Finance outputs
+- CLI and HTTP API available for QA review
+- Live LLM review path prepared through `pi-agent-core` and `pi-ai`
+
+## Tech Stack
 
 - Node.js + TypeScript
 - npm workspaces
@@ -12,27 +22,40 @@ Independent QA Agent for the AI CompanyOps multi-agent proposal. This project re
 - `@mariozechner/pi-ai`
 - Zod
 
+## Repository Structure
+
+- `packages/shared-contracts`
+  Shared schemas, constants, and types
+- `packages/qa-agent`
+  QA Agent core logic, rules, prompts, scoring, and report generation
+- `apps/qa-entry`
+  CLI and Fastify API entrypoints
+- `fixtures`
+  Sample requests and mock LLM outputs for demo and testing
+- `tests`
+  Unit and integration tests
+
 ## Install
 
 ```bash
 npm install
 ```
 
-## Run In Mock Mode
+## QA Agent Usage
 
-CLI JSON output:
+Run mock review with JSON output:
 
 ```bash
 npm run qa:review -- --input ./fixtures/happy-path.request.json --format json --mode mock
 ```
 
-CLI Markdown output:
+Run mock review with Markdown output:
 
 ```bash
 npm run qa:review -- --input ./fixtures/happy-path.request.json --format markdown --mode mock
 ```
 
-Start the HTTP API:
+Start the API server:
 
 ```bash
 npm run qa:server
@@ -46,9 +69,9 @@ curl -X POST http://localhost:3000/qa/review ^
   --data-binary "@fixtures/happy-path.request.json"
 ```
 
-## Run In Live Mode
+## Live LLM Mode
 
-Copy `.env.example` to `.env` and set:
+Copy `.env.example` to `.env` and configure:
 
 - `QA_LLM_PROVIDER`
 - `QA_LLM_MODEL`
@@ -60,9 +83,9 @@ Then run:
 npm run qa:review -- --input ./fixtures/happy-path.request.json --format json --mode live
 ```
 
-If live review fails, the QA Agent returns a degraded report with rule-based output and a summary note explaining the failure.
+If live review fails, the system falls back to rule-based review and reports degraded mode in the summary.
 
-## API
+## QA Agent API
 
 `POST /qa/review`
 
@@ -84,15 +107,16 @@ Response body matches `QaReviewReport`:
 - `missingInputs`
 - `generatedAt`
 
-## Demo Fixtures
+## Demo Assets
 
 - `fixtures/happy-path.request.json`
 - `fixtures/conflict.request.json`
 - `fixtures/missing-sections.request.json`
 - `fixtures/mock-llm/*.json`
+- `AI_CompanyOps_Proposal.docx`
 
 ## Notes
 
-- This is an independent QA Agent and does not require CEO orchestration to run.
-- Current demo flow uses mock artifacts from fixtures.
-- The output contract is stable enough for a future CEO Agent or orchestration layer to call directly.
+- This repository is intended for the full project, not only the QA module.
+- The current implemented vertical slice is the QA Agent.
+- The existing contracts are designed so a future CEO Agent or orchestration layer can call the QA module directly.
