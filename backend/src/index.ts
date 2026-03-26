@@ -174,11 +174,16 @@ const server = http.createServer((req, res) => {
               broadcast({ type: "terminal:output", terminalId, data });
 
               // Phase 2: watch for Claude ready, inject task once
+              // Detect Claude Code ready state by looking for the prompt symbol (❯)
+              // or model indicators (Haiku, Sonnet, Opus) that appear when Claude is ready for input
               if (!taskInjected) {
                 claudeOutputSoFar += data;
-                if (claudeOutputSoFar.includes("? for shortcuts") || claudeOutputSoFar.includes("for shortcuts")) {
+                const ready = claudeOutputSoFar.includes("❯") ||
+                  claudeOutputSoFar.includes("for shortcuts") ||
+                  /Haiku|Sonnet|Opus|Claude\s*Code/i.test(claudeOutputSoFar);
+                if (ready) {
                   taskInjected = true;
-                  setTimeout(() => ptyManager.write(terminalId, task + "\r"), 300);
+                  setTimeout(() => ptyManager.write(terminalId, task + "\r"), 500);
                 }
               }
             },
