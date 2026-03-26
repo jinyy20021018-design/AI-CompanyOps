@@ -2,20 +2,15 @@
 set -uo pipefail
 
 CLI_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-# Look for honcho in these locations (in order):
-# 1. COAGENT_HONCHO_DIR env var (explicit override)
-# 2. ../honcho (sibling directory — monorepo layout)
-# 3. ../../honcho (parent's sibling — e.g., Varsity/cli2 + CoAgent/honcho)
+SETUP_MARKER="$CLI_DIR/.coagent-setup-done"
+
 _find_honcho() {
   [ -n "${COAGENT_HONCHO_DIR:-}" ] && [ -d "$COAGENT_HONCHO_DIR" ] && echo "$COAGENT_HONCHO_DIR" && return
   [ -d "$CLI_DIR/../honcho" ] && echo "$(cd "$CLI_DIR/../honcho" && pwd)" && return
   [ -d "$CLI_DIR/../../honcho" ] && echo "$(cd "$CLI_DIR/../../honcho" && pwd)" && return
-  # Search common parent directories
   local p="$CLI_DIR"
   for _ in 1 2 3; do
     p="$(dirname "$p")"
-    [ -d "$p/honcho/src/main.py" ] && echo "$p/honcho" && return
-    # Check siblings
     for d in "$p"/*/; do
       [ -f "${d}src/main.py" ] && [ -f "${d}docker-compose.local.yml" ] && echo "$(cd "$d" && pwd)" && return
     done
@@ -24,9 +19,13 @@ _find_honcho() {
 }
 HONCHO_DIR="$(_find_honcho)"
 
+# ── Colors ────────────────────────────────────────
 RED='\033[0;31m'
 GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
 CYAN='\033[0;36m'
+BLUE='\033[0;34m'
+MAGENTA='\033[0;35m'
 DIM='\033[2m'
 BOLD='\033[1m'
 RESET='\033[0m'
@@ -34,269 +33,353 @@ RESET='\033[0m'
 log()  { echo -e "  ${CYAN}▸${RESET} $1"; }
 ok()   { echo -e "  ${GREEN}✓${RESET} $1"; }
 fail() { echo -e "  ${RED}✗${RESET} $1"; }
+warn() { echo -e "  ${YELLOW}!${RESET} $1"; }
 head() { echo -e "\n${BOLD}$1${RESET}"; }
 
+# ── Spinner ───────────────────────────────────────
+spin() {
+  local msg="$1"; shift
+  local pid
+  "$@" &>/dev/null &
+  pid=$!
+  local frames=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
+  local i=0
+  while kill -0 "$pid" 2>/dev/null; do
+    printf "\r  ${CYAN}${frames[$i]}${RESET} %s" "$msg"
+    i=$(( (i + 1) % 10 ))
+    sleep 0.1
+  done
+  wait "$pid" 2>/dev/null
+  local rc=$?
+  printf "\r"
+  [ $rc -eq 0 ] && ok "$msg" || fail "$msg"
+  return $rc
+}
+
+# ── Banner ────────────────────────────────────────
+banner() {
+  echo ""
+  echo -e "${BOLD}${CYAN}   ██████╗ ██████╗  █████╗  ██████╗ ███████╗███╗   ██╗████████╗${RESET}"
+  echo -e "${BOLD}${CYAN}  ██╔════╝██╔═══██╗██╔══██╗██╔════╝ ██╔════╝████╗  ██║╚══██╔══╝${RESET}"
+  echo -e "${BOLD}${CYAN}  ██║     ██║   ██║███████║██║  ███╗█████╗  ██╔██╗ ██║   ██║   ${RESET}"
+  echo -e "${BOLD}${CYAN}  ██║     ██║   ██║██╔══██║██║   ██║██╔══╝  ██║╚██╗██║   ██║   ${RESET}"
+  echo -e "${BOLD}${CYAN}  ╚██████╗╚██████╔╝██║  ██║╚██████╔╝███████╗██║ ╚████║   ██║   ${RESET}"
+  echo -e "${BOLD}${CYAN}   ╚═════╝ ╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝   ╚═╝   ${RESET}"
+  echo ""
+  echo -e "  ${DIM}Multi-agent terminal canvas with semantic memory${RESET}"
+  echo ""
+}
+
+# ── First-run wizard ──────────────────────────────
+do_wizard() {
+  banner
+
+  echo -e "${BOLD}  Welcome! Let's get you set up.${RESET}"
+  echo -e "  ${DIM}This takes about 2 minutes. You'll only do this once.${RESET}"
+  echo ""
+  sleep 1
+
+  # Step 1: Check prerequisites
+  head "  Step 1/5  Checking prerequisites"
+  sleep 0.3
+
+  local missing=0
+  command -v node &>/dev/null && ok "Node.js $(node -v)" || { fail "Node.js not found — install from https://nodejs.org"; missing=1; }
+  command -v docker &>/dev/null && ok "Docker $(docker --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')" || { fail "Docker not found — install Docker Desktop"; missing=1; }
+
+  if [ ! -d "$HONCHO_DIR" ]; then
+    fail "Honcho server not found"
+    echo -e "    ${DIM}Expected at: ../honcho (sibling of this directory)${RESET}"
+    echo -e "    ${DIM}Or set: export COAGENT_HONCHO_DIR=/path/to/honcho${RESET}"
+    missing=1
+  else
+    ok "Honcho server found"
+  fi
+
+  [ $missing -eq 1 ] && { echo ""; fail "Fix the above and try again."; exit 1; }
+
+  # Step 2: Claude Code auth
+  head "  Step 2/5  Anthropic authentication"
+  sleep 0.3
+
+  local has_claude_auth=0
+  if security find-generic-password -s "Claude Code-credentials" -w &>/dev/null; then
+    local token_preview=$(security find-generic-password -s "Claude Code-credentials" -w 2>/dev/null | python3 -c "import sys,json; t=json.loads(sys.stdin.read())['claudeAiOauth']; print(f'sk-ant-...{t[\"accessToken\"][-8:]} ({t[\"subscriptionType\"]})')" 2>/dev/null)
+    ok "Claude Code logged in  ${DIM}$token_preview${RESET}"
+    has_claude_auth=1
+  else
+    warn "Claude Code not detected"
+    echo -e "    ${DIM}Log in to Claude Code first: ${BOLD}claude${RESET}"
+    echo -e "    ${DIM}CoAgent uses your Claude Code session for LLM calls (no separate API key needed).${RESET}"
+    echo ""
+    echo -ne "  ${YELLOW}Continue without Claude auth? [y/N]:${RESET} "
+    read -r answer
+    [[ "$answer" =~ ^[Yy] ]] || exit 0
+  fi
+
+  # Step 3: Gemini API key
+  head "  Step 3/5  Embedding model"
+  sleep 0.3
+
+  local gemini_key=""
+  if [ -n "$HONCHO_DIR" ] && [ -f "$HONCHO_DIR/.env" ]; then
+    gemini_key=$(grep "^LLM_GEMINI_API_KEY=" "$HONCHO_DIR/.env" 2>/dev/null | cut -d= -f2)
+  fi
+
+  if [ -n "$gemini_key" ] && [ "$gemini_key" != "" ] && [ "$gemini_key" != "your-key-here" ]; then
+    ok "Gemini API key configured  ${DIM}${gemini_key:0:10}...${RESET}"
+  else
+    echo -e "  ${DIM}CoAgent needs an embedding model for semantic memory.${RESET}"
+    echo -e "  ${DIM}Google Gemini is free — no credit card needed.${RESET}"
+    echo ""
+    echo -e "  ${BOLD}Get your key:${RESET} ${CYAN}https://aistudio.google.com/apikey${RESET}"
+    echo ""
+    echo -ne "  ${YELLOW}Paste your Gemini API key (or Enter to skip):${RESET} "
+    read -r input_key
+    if [ -n "$input_key" ]; then
+      gemini_key="$input_key"
+      ok "Gemini key saved"
+    else
+      warn "Skipped — semantic search won't work without embeddings"
+      echo -e "    ${DIM}Add later: edit $HONCHO_DIR/.env${RESET}"
+    fi
+  fi
+
+  # Step 4: Install dependencies
+  head "  Step 4/5  Installing dependencies"
+  sleep 0.3
+
+  # uv
+  UV="${HOME}/.local/bin/uv"
+  if [ ! -x "$UV" ] && ! command -v uv &>/dev/null; then
+    spin "Installing uv (Python package manager)" curl -LsSf https://astral.sh/uv/install.sh -o /tmp/uv-install.sh
+    bash /tmp/uv-install.sh &>/dev/null
+    ok "uv installed"
+  else
+    [ ! -x "$UV" ] && UV="$(command -v uv)"
+    ok "uv ready"
+  fi
+
+  # npm
+  if [ ! -d "$CLI_DIR/backend/node_modules" ]; then
+    spin "Installing backend dependencies" bash -c "cd '$CLI_DIR' && npm install --silent 2>/dev/null && cd backend && npm install --silent 2>/dev/null && cd ../frontend && npm install --silent 2>/dev/null"
+  else
+    ok "Node dependencies ready"
+  fi
+
+  # python
+  if [ -n "$HONCHO_DIR" ] && [ ! -d "$HONCHO_DIR/.venv" ]; then
+    spin "Installing Honcho Python dependencies" bash -c "cd '$HONCHO_DIR' && '$UV' sync --quiet 2>/dev/null"
+  else
+    ok "Python dependencies ready"
+  fi
+
+  # Step 5: Configure .env
+  head "  Step 5/5  Writing configuration"
+  sleep 0.3
+
+  if [ -n "$HONCHO_DIR" ]; then
+    # Create or update .env
+    if [ ! -f "$HONCHO_DIR/.env" ]; then
+      cp "$CLI_DIR/.env.example" "$HONCHO_DIR/.env"
+    fi
+
+    # Inject Gemini key
+    if [ -n "$gemini_key" ]; then
+      if grep -q "^LLM_GEMINI_API_KEY=" "$HONCHO_DIR/.env"; then
+        sed -i '' "s|^LLM_GEMINI_API_KEY=.*|LLM_GEMINI_API_KEY=$gemini_key|" "$HONCHO_DIR/.env"
+      else
+        echo "LLM_GEMINI_API_KEY=$gemini_key" >> "$HONCHO_DIR/.env"
+      fi
+    fi
+
+    # Inject Claude token
+    if [ $has_claude_auth -eq 1 ]; then
+      bash "$HONCHO_DIR/scripts/refresh-oauth-token.sh" 2>/dev/null
+    fi
+
+    ok "Configuration saved"
+  fi
+
+  # Mark setup done
+  touch "$SETUP_MARKER"
+
+  echo ""
+  echo -e "  ${BOLD}${GREEN}Setup complete!${RESET}"
+  echo ""
+  sleep 0.5
+
+  # Now start everything
+  do_start_services
+}
+
+# ── Usage ─────────────────────────────────────────
 usage() {
   echo -e "${BOLD}CoAgent${RESET} — Multi-agent terminal canvas with semantic memory"
   echo ""
   echo "Usage: coagent [command]"
   echo ""
   echo "Commands:"
-  echo "  (default)   Start all services (same as 'start')"
-  echo "  start       Start all services (Docker, Honcho, Terminal Canvas)"
+  echo "  (default)   Start all services"
   echo "  stop        Stop all services"
   echo "  status      Show service health"
   echo "  restart     Stop then start"
   echo "  logs        Tail all service logs"
   echo "  open        Open the UI in browser"
+  echo "  setup       Re-run first-time setup"
   echo ""
 }
 
-check_deps() {
-  local missing=0
-  for cmd in docker node npm; do
-    if ! command -v "$cmd" &>/dev/null; then
-      fail "$cmd not found"
-      missing=1
-    fi
-  done
-  if [ ! -d "$HONCHO_DIR" ]; then
-    fail "Honcho directory not found at $HONCHO_DIR"
-    missing=1
-  fi
-  if ! command -v "$HOME/.local/bin/uv" &>/dev/null && ! command -v uv &>/dev/null; then
-    fail "uv not found — install with: curl -LsSf https://astral.sh/uv/install.sh | sh"
-    missing=1
-  fi
-  [ $missing -eq 1 ] && exit 1
-}
-
+# ── UV path ───────────────────────────────────────
 UV="${HOME}/.local/bin/uv"
 [ ! -x "$UV" ] && UV="$(command -v uv 2>/dev/null || echo "")"
 
-do_setup() {
-  # First-run setup — install dependencies if missing
-  local needs_setup=0
+# ── Start services ────────────────────────────────
+do_start_services() {
+  banner
+  echo -e "  ${DIM}Starting services...${RESET}"
 
-  # Check node_modules
-  if [ ! -d "$CLI_DIR/backend/node_modules" ] || [ ! -d "$CLI_DIR/frontend/node_modules" ]; then
-    needs_setup=1
-  fi
-
-  # Check honcho venv
-  if [ -n "$HONCHO_DIR" ] && [ ! -d "$HONCHO_DIR/.venv" ]; then
-    needs_setup=1
-  fi
-
-  [ $needs_setup -eq 0 ] && return 0
-
-  head "First-run setup"
-
-  # Install uv if missing
-  if ! command -v "$HOME/.local/bin/uv" &>/dev/null && ! command -v uv &>/dev/null; then
-    log "Installing uv..."
-    curl -LsSf https://astral.sh/uv/install.sh | sh 2>/dev/null
-    ok "uv installed"
-  fi
-
-  # Install node dependencies
-  if [ ! -d "$CLI_DIR/node_modules" ]; then
-    log "Installing root dependencies..."
-    cd "$CLI_DIR" && npm install --silent 2>/dev/null
-    ok "Root dependencies installed"
-  fi
-  if [ ! -d "$CLI_DIR/backend/node_modules" ]; then
-    log "Installing backend dependencies..."
-    cd "$CLI_DIR/backend" && npm install --silent 2>/dev/null
-    ok "Backend dependencies installed"
-  fi
-  if [ ! -d "$CLI_DIR/frontend/node_modules" ]; then
-    log "Installing frontend dependencies..."
-    cd "$CLI_DIR/frontend" && npm install --silent 2>/dev/null
-    ok "Frontend dependencies installed"
-  fi
-
-  # Install honcho python dependencies
-  if [ -n "$HONCHO_DIR" ] && [ ! -d "$HONCHO_DIR/.venv" ]; then
-    log "Installing Honcho Python dependencies (this may take a minute)..."
-    cd "$HONCHO_DIR" && "$UV" sync --quiet 2>/dev/null
-    ok "Honcho dependencies installed"
-  fi
-
-  # Run DB migrations if needed
-  if [ -n "$HONCHO_DIR" ] && [ -f "$HONCHO_DIR/alembic.ini" ]; then
-    log "Checking database migrations..."
-    cd "$HONCHO_DIR" && "$UV" run alembic upgrade head 2>/dev/null | tail -1
-    ok "Database migrations complete"
-  fi
-
-  # Create .env from template if missing
-  if [ -n "$HONCHO_DIR" ] && [ ! -f "$HONCHO_DIR/.env" ]; then
-    if [ -f "$CLI_DIR/.env.example" ]; then
-      cp "$CLI_DIR/.env.example" "$HONCHO_DIR/.env"
-      ok "Created .env from template"
-      echo ""
-      echo -e "  ${BOLD}ACTION NEEDED:${RESET} Add your Gemini API key for embeddings:"
-      echo -e "  ${DIM}Get a free key at: https://aistudio.google.com/apikey${RESET}"
-      echo -e "  ${DIM}Then edit: $HONCHO_DIR/.env${RESET}"
-      echo ""
-    fi
-  fi
-}
-
-do_start() {
-  echo -e "${BOLD}${CYAN}CoAgent${RESET} starting..."
-
-  check_deps
-  do_setup
-
-  # 1. Refresh OAuth token
-  head "Auth"
+  # Refresh OAuth token
   if [ -f "$HONCHO_DIR/scripts/refresh-oauth-token.sh" ]; then
-    bash "$HONCHO_DIR/scripts/refresh-oauth-token.sh" 2>/dev/null && ok "OAuth token refreshed" || log "Token refresh skipped (no Claude Code credentials)"
-  else
-    log "No token refresh script found"
+    bash "$HONCHO_DIR/scripts/refresh-oauth-token.sh" 2>/dev/null
   fi
 
-  # 2. Docker services
-  head "Infrastructure"
+  # Docker
   if ! docker info &>/dev/null; then
     fail "Docker is not running. Start Docker Desktop first."
     exit 1
   fi
   cd "$HONCHO_DIR"
   docker compose -f docker-compose.local.yml up -d 2>&1 | grep -E "Started|Running|Creating" | while read line; do log "$line"; done
-  # Wait for healthy
   for i in {1..20}; do
-    PG=$(docker inspect --format='{{.State.Health.Status}}' honcho-database-1 2>/dev/null || echo "missing")
-    RD=$(docker inspect --format='{{.State.Health.Status}}' honcho-redis-1 2>/dev/null || echo "missing")
+    PG=$(docker inspect --format='{{.State.Health.Status}}' honcho-database-1 2>/dev/null || echo "waiting")
+    RD=$(docker inspect --format='{{.State.Health.Status}}' honcho-redis-1 2>/dev/null || echo "waiting")
     [ "$PG" = "healthy" ] && [ "$RD" = "healthy" ] && break
     sleep 1
   done
-  ok "Postgres (healthy)"
-  ok "Redis (healthy)"
+  ok "Postgres + Redis"
 
-  # 3. Honcho API
-  head "Honcho Memory"
+  # DB migrations (first run after Docker)
+  if [ -f "$HONCHO_DIR/alembic.ini" ]; then
+    cd "$HONCHO_DIR" && "$UV" run alembic upgrade head &>/dev/null
+  fi
+
+  # Honcho API
   lsof -ti :8000 | xargs kill -9 2>/dev/null || true
   sleep 0.5
   cd "$HONCHO_DIR"
   nohup "$UV" run fastapi dev src/main.py --port 8000 > /tmp/coagent-honcho-api.log 2>&1 &
-  # Wait for API
   for i in {1..20}; do
     curl -sf http://localhost:8000/v3/workspaces -X POST -H "Content-Type: application/json" -d '{"id":"terminal-canvas"}' > /dev/null 2>&1 && break
     sleep 1
   done
-  ok "Honcho API (port 8000)"
+  ok "Honcho API"
 
-  # 4. Deriver
+  # Deriver
   pkill -f "src.deriver" 2>/dev/null || true
   sleep 0.5
   DERIVER_FLUSH_ENABLED=true nohup "$UV" run python -m src.deriver > /tmp/coagent-honcho-deriver.log 2>&1 &
-  ok "Honcho Deriver (background)"
+  ok "Memory deriver"
 
-  # 5. Terminal Canvas
-  head "Terminal Canvas"
+  # Terminal Canvas
   lsof -ti :3001 | xargs kill -9 2>/dev/null || true
   lsof -ti :5173 | xargs kill -9 2>/dev/null || true
   sleep 0.5
   cd "$CLI_DIR"
   HONCHO_BASE_URL="http://localhost:8000" HONCHO_API_KEY="local" nohup npm run dev > /tmp/coagent-terminal-canvas.log 2>&1 &
-  # Wait for frontend
   for i in {1..15}; do
     PORT=$(grep -oE 'http://localhost:[0-9]+' /tmp/coagent-terminal-canvas.log 2>/dev/null | head -1 | grep -oE '[0-9]+$')
     [ -n "$PORT" ] && break
     sleep 1
   done
   PORT=${PORT:-5173}
-  ok "Backend (port 3001)"
-  ok "Frontend (port $PORT)"
+  ok "Terminal Canvas"
 
   # Done
   echo ""
-  echo -e "${BOLD}${GREEN}All services running${RESET}"
-  echo -e "  ${DIM}UI:${RESET}       http://localhost:$PORT"
-  echo -e "  ${DIM}API:${RESET}      http://localhost:8000"
-  echo -e "  ${DIM}Backend:${RESET}  ws://localhost:3001"
-  echo -e "  ${DIM}Logs:${RESET}     coagent logs"
+  echo -e "  ${BOLD}${GREEN}Ready!${RESET}  ${DIM}6 services running${RESET}"
+  echo ""
+  echo -e "  ${CYAN}  ➜${RESET}  ${BOLD}http://localhost:$PORT${RESET}"
+  echo ""
+  echo -e "  ${DIM}  coagent status   health check${RESET}"
+  echo -e "  ${DIM}  coagent logs     view logs${RESET}"
+  echo -e "  ${DIM}  coagent stop     shut down${RESET}"
   echo ""
 
-  # Auto-open browser
   open "http://localhost:$PORT" 2>/dev/null || true
 }
 
-do_stop() {
-  echo -e "${BOLD}${CYAN}CoAgent${RESET} stopping..."
+# ── Start (with wizard check) ─────────────────────
+do_start() {
+  if [ ! -f "$SETUP_MARKER" ]; then
+    do_wizard
+  else
+    do_start_services
+  fi
+}
 
-  log "Stopping Terminal Canvas..."
+# ── Stop ──────────────────────────────────────────
+do_stop() {
+  echo -e "\n  ${DIM}Stopping CoAgent...${RESET}"
+
   lsof -ti :3001 | xargs kill -9 2>/dev/null || true
   lsof -ti :5173 | xargs kill -9 2>/dev/null || true
   lsof -ti :5174 | xargs kill -9 2>/dev/null || true
-  ok "Terminal Canvas stopped"
-
-  log "Stopping Honcho..."
   lsof -ti :8000 | xargs kill -9 2>/dev/null || true
   pkill -f "src.deriver" 2>/dev/null || true
-  ok "Honcho stopped"
-
-  log "Stopping Docker..."
   cd "$HONCHO_DIR" 2>/dev/null && docker compose -f docker-compose.local.yml stop 2>&1 | grep -v "^$" || true
-  ok "Docker stopped"
 
-  echo -e "\n${GREEN}All services stopped${RESET}"
+  echo -e "  ${GREEN}✓${RESET} All services stopped"
+  echo ""
 }
 
+# ── Status ────────────────────────────────────────
 do_status() {
-  echo -e "${BOLD}${CYAN}CoAgent${RESET} status"
+  echo ""
+  echo -e "  ${BOLD}CoAgent${RESET} services"
   echo ""
 
-  # Postgres
   PG=$(docker inspect --format='{{.State.Health.Status}}' honcho-database-1 2>/dev/null || echo "stopped")
-  [ "$PG" = "healthy" ] && ok "Postgres     :5432  (healthy)" || fail "Postgres     :5432  ($PG)"
+  [ "$PG" = "healthy" ] && ok "Postgres     :5432" || fail "Postgres     :5432  ($PG)"
 
-  # Redis
   RD=$(docker inspect --format='{{.State.Health.Status}}' honcho-redis-1 2>/dev/null || echo "stopped")
-  [ "$RD" = "healthy" ] && ok "Redis        :6379  (healthy)" || fail "Redis        :6379  ($RD)"
+  [ "$RD" = "healthy" ] && ok "Redis        :6379" || fail "Redis        :6379  ($RD)"
 
-  # Honcho API
-  lsof -ti :8000 > /dev/null 2>&1 && ok "Honcho API   :8000" || fail "Honcho API   :8000  (not running)"
+  lsof -ti :8000 > /dev/null 2>&1 && ok "Honcho API   :8000" || fail "Honcho API   :8000"
+  pgrep -f "src.deriver" > /dev/null 2>&1 && ok "Deriver      running" || fail "Deriver"
+  lsof -ti :3001 > /dev/null 2>&1 && ok "Backend      :3001" || fail "Backend      :3001"
 
-  # Deriver
-  pgrep -f "src.deriver" > /dev/null 2>&1 && ok "Deriver      (background)" || fail "Deriver      (not running)"
-
-  # Backend
-  lsof -ti :3001 > /dev/null 2>&1 && ok "Backend      :3001" || fail "Backend      :3001  (not running)"
-
-  # Frontend
   PORT=""
   for p in 5173 5174 5175; do
     lsof -ti :$p > /dev/null 2>&1 && PORT=$p && break
   done
-  [ -n "$PORT" ] && ok "Frontend     :$PORT" || fail "Frontend     (not running)"
-
+  [ -n "$PORT" ] && ok "Frontend     :$PORT" || fail "Frontend"
   echo ""
 }
 
+# ── Logs ──────────────────────────────────────────
 do_logs() {
   tail -f /tmp/coagent-honcho-api.log /tmp/coagent-honcho-deriver.log /tmp/coagent-terminal-canvas.log 2>/dev/null
 }
 
+# ── Open ──────────────────────────────────────────
 do_open() {
   for p in 5173 5174 5175; do
     lsof -ti :$p > /dev/null 2>&1 && open "http://localhost:$p" && exit 0
   done
-  fail "Frontend not running. Start with: coagent"
+  fail "Not running. Start with: coagent"
   exit 1
 }
 
-# Main — bare `coagent` defaults to start
+# ── Main ──────────────────────────────────────────
 case "${1:-start}" in
   start)   do_start ;;
   stop)    do_stop ;;
   status)  do_status ;;
-  restart) do_stop; echo ""; do_start ;;
+  restart) do_stop; do_start_services ;;
   logs)    do_logs ;;
   open)    do_open ;;
+  setup)   rm -f "$SETUP_MARKER"; do_wizard ;;
   help|-h|--help) usage ;;
   *)       echo "Unknown command: $1"; usage; exit 1 ;;
 esac
