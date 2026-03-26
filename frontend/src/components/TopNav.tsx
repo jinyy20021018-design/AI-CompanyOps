@@ -38,8 +38,8 @@ type Props = {
   onRemoveFolder: (id: string) => void;
   folderError: string | null;
   costSummary: CostSummary | null;
-  viewMode: "overview" | "focus";
-  onViewModeChange: (mode: "overview" | "focus") => void;
+  viewMode: "overview" | "focus" | "files";
+  onViewModeChange: (mode: "overview" | "focus" | "files") => void;
   onOpenSettings: () => void;
   onOpenChat?: () => void;
   send: (msg: ClientMessage) => void;
@@ -202,6 +202,12 @@ export function TopNav({
             onClick={() => onViewModeChange("focus")}
           >
             Focus
+          </button>
+          <button
+            className={`top-nav-mode-btn${viewMode === "files" ? " active" : ""}`}
+            onClick={() => onViewModeChange("files")}
+          >
+            Files
           </button>
         </div>
         {activeFolder && (
