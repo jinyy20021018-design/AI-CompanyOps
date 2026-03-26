@@ -53,8 +53,16 @@ export function useSocket(url: string) {
     return () => {
       disposed.current = true;
       clearTimeout(reconnectTimer.current);
-      wsRef.current?.close();
-      wsRef.current = null;
+      const ws = wsRef.current;
+      if (ws) {
+        // Only close if actually open — avoids "closed before established" warning
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.close();
+        } else if (ws.readyState === WebSocket.CONNECTING) {
+          ws.addEventListener("open", () => ws.close(), { once: true });
+        }
+        wsRef.current = null;
+      }
     };
   }, [connect]);
 
