@@ -8,3 +8,4 @@ folders.json
 .env.local
 *.tsbuildinfo
 .gstack/
+.coagent-setup-done
