@@ -19,10 +19,18 @@ Orchestrate multiple Claude agents in parallel from a visual canvas. Each agent 
 Prerequisites: [Node.js](https://nodejs.org/) (v20+), [Docker Desktop](https://www.docker.com/products/docker-desktop/), [Claude Code](https://claude.ai/code) (logged in)
 
 ```bash
-git clone <repo-url>
-cd cli2
+# Clone both repos as siblings
+git clone <repo-url> coagent
+git clone https://github.com/plastic-labs/honcho.git honcho
 
-# First run — installs everything automatically
+# Start
+cd coagent
+./bin/coagent-cli
+```
+
+If Honcho is in a different location, set the path:
+```bash
+export COAGENT_HONCHO_DIR="/path/to/honcho"
 ./bin/coagent-cli
 ```
 
