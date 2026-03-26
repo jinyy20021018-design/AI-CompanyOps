@@ -21,10 +21,10 @@ import type { FolderEntry, TerminalWindowModel, ServerMessage, CostSummary, Scra
 
 type LayoutMode = "structured" | "canvas";
 
-const DEFAULT_WIDTH = 540;
-const DEFAULT_HEIGHT = 320;
-const COORD_WIDTH = 660;
-const COORD_HEIGHT = 420;
+const DEFAULT_WIDTH = 420;
+const DEFAULT_HEIGHT = 260;
+const COORD_WIDTH = 500;
+const COORD_HEIGHT = 320;
 
 export default function App() {
   const { send, addHandler } = useSocket("ws://localhost:3001");
