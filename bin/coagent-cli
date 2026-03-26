@@ -2,7 +2,27 @@
 set -uo pipefail
 
 CLI_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-HONCHO_DIR="${COAGENT_HONCHO_DIR:-/Users/enicul/Documents/CoAgent/honcho}"
+# Look for honcho in these locations (in order):
+# 1. COAGENT_HONCHO_DIR env var (explicit override)
+# 2. ../honcho (sibling directory — monorepo layout)
+# 3. ../../honcho (parent's sibling — e.g., Varsity/cli2 + CoAgent/honcho)
+_find_honcho() {
+  [ -n "${COAGENT_HONCHO_DIR:-}" ] && [ -d "$COAGENT_HONCHO_DIR" ] && echo "$COAGENT_HONCHO_DIR" && return
+  [ -d "$CLI_DIR/../honcho" ] && echo "$(cd "$CLI_DIR/../honcho" && pwd)" && return
+  [ -d "$CLI_DIR/../../honcho" ] && echo "$(cd "$CLI_DIR/../../honcho" && pwd)" && return
+  # Search common parent directories
+  local p="$CLI_DIR"
+  for _ in 1 2 3; do
+    p="$(dirname "$p")"
+    [ -d "$p/honcho/src/main.py" ] && echo "$p/honcho" && return
+    # Check siblings
+    for d in "$p"/*/; do
+      [ -f "${d}src/main.py" ] && [ -f "${d}docker-compose.local.yml" ] && echo "$(cd "$d" && pwd)" && return
+    done
+  done
+  echo ""
+}
+HONCHO_DIR="$(_find_honcho)"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
