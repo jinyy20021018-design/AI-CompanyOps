@@ -58,15 +58,49 @@ spin() {
 
 # ── Banner ────────────────────────────────────────
 banner() {
+  local C1='\033[38;5;39m'   # bright blue
+  local C2='\033[38;5;45m'   # cyan
+  local C3='\033[38;5;50m'   # teal
+  local C4='\033[38;5;85m'   # mint
+  local C5='\033[38;5;121m'  # light green
+  local C6='\033[38;5;156m'  # pale green
+  local R="$RESET"
+  local B="$BOLD"
+
+  # Animated reveal — each line fades in
+  local lines=(
+    "${B}${C1}   ██████╗  ██████╗   █████╗   ██████╗  ███████╗ ███╗   ██╗ ████████╗${R}"
+    "${B}${C2}  ██╔════╝ ██╔═══██╗ ██╔══██╗ ██╔════╝  ██╔════╝ ████╗  ██║ ╚══██╔══╝${R}"
+    "${B}${C3}  ██║      ██║   ██║ ███████║ ██║  ███╗ █████╗   ██╔██╗ ██║    ██║   ${R}"
+    "${B}${C4}  ██║      ██║   ██║ ██╔══██║ ██║   ██║ ██╔══╝   ██║╚██╗██║    ██║   ${R}"
+    "${B}${C5}  ╚██████╗ ╚██████╔╝ ██║  ██║ ╚██████╔╝ ███████╗ ██║ ╚████║    ██║   ${R}"
+    "${B}${C6}   ╚═════╝  ╚═════╝  ╚═╝  ╚═╝  ╚═════╝  ╚══════╝ ╚═╝  ╚═══╝    ╚═╝   ${R}"
+  )
+
   echo ""
-  echo -e "${BOLD}${CYAN}   ██████╗ ██████╗  █████╗  ██████╗ ███████╗███╗   ██╗████████╗${RESET}"
-  echo -e "${BOLD}${CYAN}  ██╔════╝██╔═══██╗██╔══██╗██╔════╝ ██╔════╝████╗  ██║╚══██╔══╝${RESET}"
-  echo -e "${BOLD}${CYAN}  ██║     ██║   ██║███████║██║  ███╗█████╗  ██╔██╗ ██║   ██║   ${RESET}"
-  echo -e "${BOLD}${CYAN}  ██║     ██║   ██║██╔══██║██║   ██║██╔══╝  ██║╚██╗██║   ██║   ${RESET}"
-  echo -e "${BOLD}${CYAN}  ╚██████╗╚██████╔╝██║  ██║╚██████╔╝███████╗██║ ╚████║   ██║   ${RESET}"
-  echo -e "${BOLD}${CYAN}   ╚═════╝ ╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝   ╚═╝   ${RESET}"
-  echo ""
-  echo -e "  ${DIM}Multi-agent terminal canvas with semantic memory${RESET}"
+  for line in "${lines[@]}"; do
+    echo -e "$line"
+    sleep 0.05
+  done
+  sleep 0.15
+
+  # Tagline with typing effect
+  local tagline="  Multi-agent terminal canvas with semantic memory"
+  echo -ne "\n  ${DIM}"
+  for (( i=0; i<${#tagline}; i++ )); do
+    echo -n "${tagline:$i:1}"
+    sleep 0.012
+  done
+  echo -e "${RESET}"
+
+  # Subtle sparkle
+  local sparks=("✦" "·" "✧" "·" "✦")
+  echo -ne "  ${DIM}"
+  for s in "${sparks[@]}"; do
+    echo -ne "${C3}${s}${R}${DIM} "
+    sleep 0.08
+  done
+  echo -e "${RESET}"
   echo ""
 }
 
