@@ -42,10 +42,10 @@ export function ChatPanel({ terminals, messages, onSend, onClose }: Props) {
   const coordinator = terminals.find((t) => t.tag === "coordinator");
   const workers = terminals.filter((t) => t.tag !== "coordinator");
 
-  const agentOptions: { value: string; label: string }[] = [];
-  if (coordinator) agentOptions.push({ value: coordinator.title.toLowerCase(), label: "Coordinator" });
-  for (const w of workers) agentOptions.push({ value: w.title.toLowerCase(), label: w.title });
-  agentOptions.push({ value: "*", label: "All agents (*)" });
+  const agentOptions: { key: string; value: string; label: string }[] = [];
+  if (coordinator) agentOptions.push({ key: coordinator.id, value: coordinator.sessionName ?? "coordinator", label: "Coordinator" });
+  for (const w of workers) agentOptions.push({ key: w.id, value: w.sessionName ?? w.title.toLowerCase(), label: w.title });
+  agentOptions.push({ key: "*", value: "*", label: "All agents (*)" });
 
   const [tab, setTab] = useState<"chat" | "send">("chat");
   const [to, setTo] = useState(agentOptions[0]?.value ?? "*");
@@ -187,7 +187,7 @@ export function ChatPanel({ terminals, messages, onSend, onClose }: Props) {
             <div className="chat-panel-inline-selects">
               <select className="chat-panel-select-sm" value={to} onChange={(e) => setTo(e.target.value)}>
                 {agentOptions.map((opt) => (
-                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  <option key={opt.key} value={opt.value}>{opt.label}</option>
                 ))}
               </select>
               <select className="chat-panel-select-sm" value={msgType} onChange={(e) => setMsgType(e.target.value)}>
@@ -210,7 +210,7 @@ export function ChatPanel({ terminals, messages, onSend, onClose }: Props) {
                 <div className="chat-panel-mention-list">
                   {filteredMentions.map((opt) => (
                     <button
-                      key={opt.value}
+                      key={opt.key}
                       className="chat-panel-mention-item"
                       onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); handleMentionSelect(opt.value); }}
                     >
@@ -234,7 +234,7 @@ export function ChatPanel({ terminals, messages, onSend, onClose }: Props) {
               <label className="chat-panel-label">To:</label>
               <select className="chat-panel-select" value={to} onChange={(e) => setTo(e.target.value)}>
                 {agentOptions.map((opt) => (
-                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  <option key={opt.key} value={opt.value}>{opt.label}</option>
                 ))}
               </select>
             </div>
@@ -260,7 +260,7 @@ export function ChatPanel({ terminals, messages, onSend, onClose }: Props) {
               <div className="chat-panel-mention-list">
                 {filteredMentions.map((opt) => (
                   <button
-                    key={opt.value}
+                    key={opt.key}
                     className="chat-panel-mention-item"
                     onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); handleMentionSelect(opt.value); }}
                   >
