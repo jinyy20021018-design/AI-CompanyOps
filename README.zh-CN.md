@@ -19,10 +19,18 @@
 前置要求：[Node.js](https://nodejs.org/)（v20+）、[Docker Desktop](https://www.docker.com/products/docker-desktop/)、[Claude Code](https://claude.ai/code)（已登录）
 
 ```bash
-git clone <仓库地址>
-cd cli2
+# 克隆两个仓库为并列目录
+git clone <仓库地址> coagent
+git clone https://github.com/plastic-labs/honcho.git honcho
 
-# 首次运行 — 自动安装所有依赖
+# 启动
+cd coagent
+./bin/coagent-cli
+```
+
+如果 Honcho 在其他位置，设置路径：
+```bash
+export COAGENT_HONCHO_DIR="/path/to/honcho"
 ./bin/coagent-cli
 ```
 
