@@ -16,7 +16,7 @@ Orchestrate multiple Claude agents in parallel from a visual canvas. Each agent 
 
 ## Quick Start
 
-Prerequisites: [Node.js](https://nodejs.org/) (v20+), [Docker Desktop](https://www.docker.com/products/docker-desktop/) (running), [Claude Code](https://claude.ai/code) (logged in)
+Prerequisites: [Node.js](https://nodejs.org/) (v20 or v22 LTS), [Docker Desktop](https://www.docker.com/products/docker-desktop/) (running), [Claude Code](https://claude.ai/code) (logged in)
 
 ```bash
 git clone https://github.com/ZihaoChenz/CoAgents.git
