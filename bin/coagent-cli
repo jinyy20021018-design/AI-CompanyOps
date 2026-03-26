@@ -1,0 +1,209 @@
+#!/bin/bash
+set -euo pipefail
+
+CLI_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+HONCHO_DIR="$(cd "$CLI_DIR/../honcho" 2>/dev/null && pwd || echo "")"
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+CYAN='\033[0;36m'
+DIM='\033[2m'
+BOLD='\033[1m'
+RESET='\033[0m'
+
+log()  { echo -e "  ${CYAN}▸${RESET} $1"; }
+ok()   { echo -e "  ${GREEN}✓${RESET} $1"; }
+fail() { echo -e "  ${RED}✗${RESET} $1"; }
+head() { echo -e "\n${BOLD}$1${RESET}"; }
+
+usage() {
+  echo -e "${BOLD}CoAgent${RESET} — Multi-agent terminal canvas with semantic memory"
+  echo ""
+  echo "Usage: coagent <command>"
+  echo ""
+  echo "Commands:"
+  echo "  start       Start all services (Docker, Honcho, Terminal Canvas)"
+  echo "  stop        Stop all services"
+  echo "  status      Show service health"
+  echo "  restart     Stop then start"
+  echo "  logs        Tail all service logs"
+  echo "  open        Open the UI in browser"
+  echo ""
+}
+
+check_deps() {
+  local missing=0
+  for cmd in docker node npm; do
+    if ! command -v "$cmd" &>/dev/null; then
+      fail "$cmd not found"
+      missing=1
+    fi
+  done
+  if [ ! -d "$HONCHO_DIR" ]; then
+    fail "Honcho directory not found at $HONCHO_DIR"
+    missing=1
+  fi
+  if ! command -v "$HOME/.local/bin/uv" &>/dev/null && ! command -v uv &>/dev/null; then
+    fail "uv not found — install with: curl -LsSf https://astral.sh/uv/install.sh | sh"
+    missing=1
+  fi
+  [ $missing -eq 1 ] && exit 1
+}
+
+UV="${HOME}/.local/bin/uv"
+[ ! -x "$UV" ] && UV="$(command -v uv 2>/dev/null || echo "")"
+
+do_start() {
+  echo -e "${BOLD}${CYAN}CoAgent${RESET} starting..."
+
+  check_deps
+
+  # 1. Refresh OAuth token
+  head "Auth"
+  if [ -f "$HONCHO_DIR/scripts/refresh-oauth-token.sh" ]; then
+    bash "$HONCHO_DIR/scripts/refresh-oauth-token.sh" 2>/dev/null && ok "OAuth token refreshed" || log "Token refresh skipped (no Claude Code credentials)"
+  else
+    log "No token refresh script found"
+  fi
+
+  # 2. Docker services
+  head "Infrastructure"
+  if ! docker info &>/dev/null; then
+    fail "Docker is not running. Start Docker Desktop first."
+    exit 1
+  fi
+  cd "$HONCHO_DIR"
+  docker compose -f docker-compose.local.yml up -d 2>&1 | grep -E "Started|Running|Creating" | while read line; do log "$line"; done
+  # Wait for healthy
+  for i in {1..20}; do
+    PG=$(docker inspect --format='{{.State.Health.Status}}' honcho-database-1 2>/dev/null || echo "missing")
+    RD=$(docker inspect --format='{{.State.Health.Status}}' honcho-redis-1 2>/dev/null || echo "missing")
+    [ "$PG" = "healthy" ] && [ "$RD" = "healthy" ] && break
+    sleep 1
+  done
+  ok "Postgres (healthy)"
+  ok "Redis (healthy)"
+
+  # 3. Honcho API
+  head "Honcho Memory"
+  lsof -ti :8000 | xargs kill -9 2>/dev/null || true
+  sleep 0.5
+  cd "$HONCHO_DIR"
+  nohup "$UV" run fastapi dev src/main.py --port 8000 > /tmp/coagent-honcho-api.log 2>&1 &
+  # Wait for API
+  for i in {1..20}; do
+    curl -sf http://localhost:8000/v3/workspaces -X POST -H "Content-Type: application/json" -d '{"id":"terminal-canvas"}' > /dev/null 2>&1 && break
+    sleep 1
+  done
+  ok "Honcho API (port 8000)"
+
+  # 4. Deriver
+  pkill -f "src.deriver" 2>/dev/null || true
+  sleep 0.5
+  DERIVER_FLUSH_ENABLED=true nohup "$UV" run python -m src.deriver > /tmp/coagent-honcho-deriver.log 2>&1 &
+  ok "Honcho Deriver (background)"
+
+  # 5. Terminal Canvas
+  head "Terminal Canvas"
+  lsof -ti :3001 | xargs kill -9 2>/dev/null || true
+  lsof -ti :5173 | xargs kill -9 2>/dev/null || true
+  sleep 0.5
+  cd "$CLI_DIR"
+  HONCHO_BASE_URL="http://localhost:8000" HONCHO_API_KEY="local" nohup npm run dev > /tmp/coagent-terminal-canvas.log 2>&1 &
+  # Wait for frontend
+  for i in {1..15}; do
+    PORT=$(grep -oE 'http://localhost:[0-9]+' /tmp/coagent-terminal-canvas.log 2>/dev/null | head -1 | grep -oE '[0-9]+$')
+    [ -n "$PORT" ] && break
+    sleep 1
+  done
+  PORT=${PORT:-5173}
+  ok "Backend (port 3001)"
+  ok "Frontend (port $PORT)"
+
+  # Done
+  echo ""
+  echo -e "${BOLD}${GREEN}All services running${RESET}"
+  echo -e "  ${DIM}UI:${RESET}       http://localhost:$PORT"
+  echo -e "  ${DIM}API:${RESET}      http://localhost:8000"
+  echo -e "  ${DIM}Backend:${RESET}  ws://localhost:3001"
+  echo -e "  ${DIM}Logs:${RESET}     coagent logs"
+  echo ""
+
+  # Auto-open browser
+  open "http://localhost:$PORT" 2>/dev/null || true
+}
+
+do_stop() {
+  echo -e "${BOLD}${CYAN}CoAgent${RESET} stopping..."
+
+  log "Stopping Terminal Canvas..."
+  lsof -ti :3001 | xargs kill -9 2>/dev/null || true
+  lsof -ti :5173 | xargs kill -9 2>/dev/null || true
+  lsof -ti :5174 | xargs kill -9 2>/dev/null || true
+  ok "Terminal Canvas stopped"
+
+  log "Stopping Honcho..."
+  lsof -ti :8000 | xargs kill -9 2>/dev/null || true
+  pkill -f "src.deriver" 2>/dev/null || true
+  ok "Honcho stopped"
+
+  log "Stopping Docker..."
+  cd "$HONCHO_DIR" 2>/dev/null && docker compose -f docker-compose.local.yml stop 2>&1 | grep -v "^$" || true
+  ok "Docker stopped"
+
+  echo -e "\n${GREEN}All services stopped${RESET}"
+}
+
+do_status() {
+  echo -e "${BOLD}${CYAN}CoAgent${RESET} status"
+  echo ""
+
+  # Postgres
+  PG=$(docker inspect --format='{{.State.Health.Status}}' honcho-database-1 2>/dev/null || echo "stopped")
+  [ "$PG" = "healthy" ] && ok "Postgres     :5432  (healthy)" || fail "Postgres     :5432  ($PG)"
+
+  # Redis
+  RD=$(docker inspect --format='{{.State.Health.Status}}' honcho-redis-1 2>/dev/null || echo "stopped")
+  [ "$RD" = "healthy" ] && ok "Redis        :6379  (healthy)" || fail "Redis        :6379  ($RD)"
+
+  # Honcho API
+  lsof -ti :8000 > /dev/null 2>&1 && ok "Honcho API   :8000" || fail "Honcho API   :8000  (not running)"
+
+  # Deriver
+  pgrep -f "src.deriver" > /dev/null 2>&1 && ok "Deriver      (background)" || fail "Deriver      (not running)"
+
+  # Backend
+  lsof -ti :3001 > /dev/null 2>&1 && ok "Backend      :3001" || fail "Backend      :3001  (not running)"
+
+  # Frontend
+  PORT=""
+  for p in 5173 5174 5175; do
+    lsof -ti :$p > /dev/null 2>&1 && PORT=$p && break
+  done
+  [ -n "$PORT" ] && ok "Frontend     :$PORT" || fail "Frontend     (not running)"
+
+  echo ""
+}
+
+do_logs() {
+  tail -f /tmp/coagent-honcho-api.log /tmp/coagent-honcho-deriver.log /tmp/coagent-terminal-canvas.log 2>/dev/null
+}
+
+do_open() {
+  for p in 5173 5174 5175; do
+    lsof -ti :$p > /dev/null 2>&1 && open "http://localhost:$p" && exit 0
+  done
+  fail "Frontend not running. Start with: coagent start"
+  exit 1
+}
+
+# Main
+case "${1:-}" in
+  start)   do_start ;;
+  stop)    do_stop ;;
+  status)  do_status ;;
+  restart) do_stop; echo ""; do_start ;;
+  logs)    do_logs ;;
+  open)    do_open ;;
+  *)       usage ;;
+esac
