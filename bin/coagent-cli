@@ -74,10 +74,81 @@ check_deps() {
 UV="${HOME}/.local/bin/uv"
 [ ! -x "$UV" ] && UV="$(command -v uv 2>/dev/null || echo "")"
 
+do_setup() {
+  # First-run setup — install dependencies if missing
+  local needs_setup=0
+
+  # Check node_modules
+  if [ ! -d "$CLI_DIR/backend/node_modules" ] || [ ! -d "$CLI_DIR/frontend/node_modules" ]; then
+    needs_setup=1
+  fi
+
+  # Check honcho venv
+  if [ -n "$HONCHO_DIR" ] && [ ! -d "$HONCHO_DIR/.venv" ]; then
+    needs_setup=1
+  fi
+
+  [ $needs_setup -eq 0 ] && return 0
+
+  head "First-run setup"
+
+  # Install uv if missing
+  if ! command -v "$HOME/.local/bin/uv" &>/dev/null && ! command -v uv &>/dev/null; then
+    log "Installing uv..."
+    curl -LsSf https://astral.sh/uv/install.sh | sh 2>/dev/null
+    ok "uv installed"
+  fi
+
+  # Install node dependencies
+  if [ ! -d "$CLI_DIR/node_modules" ]; then
+    log "Installing root dependencies..."
+    cd "$CLI_DIR" && npm install --silent 2>/dev/null
+    ok "Root dependencies installed"
+  fi
+  if [ ! -d "$CLI_DIR/backend/node_modules" ]; then
+    log "Installing backend dependencies..."
+    cd "$CLI_DIR/backend" && npm install --silent 2>/dev/null
+    ok "Backend dependencies installed"
+  fi
+  if [ ! -d "$CLI_DIR/frontend/node_modules" ]; then
+    log "Installing frontend dependencies..."
+    cd "$CLI_DIR/frontend" && npm install --silent 2>/dev/null
+    ok "Frontend dependencies installed"
+  fi
+
+  # Install honcho python dependencies
+  if [ -n "$HONCHO_DIR" ] && [ ! -d "$HONCHO_DIR/.venv" ]; then
+    log "Installing Honcho Python dependencies (this may take a minute)..."
+    cd "$HONCHO_DIR" && "$UV" sync --quiet 2>/dev/null
+    ok "Honcho dependencies installed"
+  fi
+
+  # Run DB migrations if needed
+  if [ -n "$HONCHO_DIR" ] && [ -f "$HONCHO_DIR/alembic.ini" ]; then
+    log "Checking database migrations..."
+    cd "$HONCHO_DIR" && "$UV" run alembic upgrade head 2>/dev/null | tail -1
+    ok "Database migrations complete"
+  fi
+
+  # Create .env from template if missing
+  if [ -n "$HONCHO_DIR" ] && [ ! -f "$HONCHO_DIR/.env" ]; then
+    if [ -f "$CLI_DIR/.env.example" ]; then
+      cp "$CLI_DIR/.env.example" "$HONCHO_DIR/.env"
+      ok "Created .env from template"
+      echo ""
+      echo -e "  ${BOLD}ACTION NEEDED:${RESET} Add your Gemini API key for embeddings:"
+      echo -e "  ${DIM}Get a free key at: https://aistudio.google.com/apikey${RESET}"
+      echo -e "  ${DIM}Then edit: $HONCHO_DIR/.env${RESET}"
+      echo ""
+    fi
+  fi
+}
+
 do_start() {
   echo -e "${BOLD}${CYAN}CoAgent${RESET} starting..."
 
   check_deps
+  do_setup
 
   # 1. Refresh OAuth token
   head "Auth"
