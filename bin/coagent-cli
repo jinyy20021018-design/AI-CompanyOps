@@ -194,11 +194,30 @@ do_wizard() {
   command -v node &>/dev/null && ok "Node.js $(node -v)" || { fail "Node.js not found — install from https://nodejs.org"; missing=1; }
   command -v docker &>/dev/null && ok "Docker $(docker --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')" || { fail "Docker not found — install Docker Desktop"; missing=1; }
 
-  if [ ! -d "$HONCHO_DIR" ]; then
-    fail "Honcho server not found"
-    echo -e "    ${DIM}Expected at: ../honcho (sibling of this directory)${RESET}"
-    echo -e "    ${DIM}Or set: export COAGENT_HONCHO_DIR=/path/to/honcho${RESET}"
-    missing=1
+  if [ ! -d "$HONCHO_DIR" ] || [ -z "$HONCHO_DIR" ]; then
+    warn "Honcho server not found"
+    echo -e "    ${DIM}CoAgent needs the Honcho memory server to run.${RESET}"
+    echo -e "    ${DIM}We'll clone it as a sibling directory (one-time, ~30 seconds).${RESET}"
+    echo ""
+    echo -ne "  ${YELLOW}Clone Honcho now? [Y/n]:${RESET} "
+    read -r clone_answer
+    if [[ "$clone_answer" =~ ^[Nn] ]]; then
+      echo ""
+      echo -e "  ${DIM}Clone it manually:${RESET}"
+      echo -e "  ${CYAN}git clone https://github.com/plastic-labs/honcho.git ${CLI_DIR}/../honcho${RESET}"
+      echo -e "  ${DIM}Or set: export COAGENT_HONCHO_DIR=/path/to/honcho${RESET}"
+      exit 1
+    fi
+    echo ""
+    log "Cloning Honcho..."
+    if git clone --quiet https://github.com/plastic-labs/honcho.git "${CLI_DIR}/../honcho" 2>/dev/null; then
+      HONCHO_DIR="$(cd "${CLI_DIR}/../honcho" && pwd)"
+      ok "Honcho cloned to ${DIM}${HONCHO_DIR}${RESET}"
+    else
+      fail "Clone failed. Check your internet connection and try:"
+      echo -e "    ${CYAN}git clone https://github.com/plastic-labs/honcho.git ${CLI_DIR}/../honcho${RESET}"
+      missing=1
+    fi
   else
     ok "Honcho server found"
   fi
