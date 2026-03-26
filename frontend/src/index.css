@@ -160,6 +160,15 @@ html, body, #root {
   flex-shrink: 0;
   font-family: var(--font-mono);
   font-size: var(--text-sm);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.top-nav::-webkit-scrollbar { display: none; }
+
+@media (max-width: 640px) {
+  .top-nav { gap: var(--sp-1); padding: 0 var(--sp-2); }
+  .top-nav-workspace-label,
+  .top-nav-path { display: none; }
 }
 
 /* Folder selector group */
