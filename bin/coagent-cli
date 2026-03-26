@@ -96,10 +96,29 @@ banner() {
     echo -e "${PD}${garbage}${R}"
   done
 
-  # Decode passes — each pass locks in more correct characters
-  local passes=8
+  # Pure scramble phase — just random glyphs cycling, no locking yet
+  local scramble_frames=12
+  for (( frame=0; frame<scramble_frames; frame++ )); do
+    printf "\033[${nlines}A"
+    for (( row=0; row<nlines; row++ )); do
+      local output=""
+      local target="${lines[$row]}"
+      for (( col=0; col<len; col++ )); do
+        local ch="${target:$col:1}"
+        if [ "$ch" = " " ]; then
+          output+=" "
+        else
+          output+="${glyphs[$((RANDOM % nglyphs))]}"
+        fi
+      done
+      echo -e "${PD}${output}${R}"
+    done
+    sleep 0.06
+  done
+
+  # Decode phase — characters lock in progressively
+  local passes=10
   for (( pass=1; pass<=passes; pass++ )); do
-    # Move cursor up to overwrite
     printf "\033[${nlines}A"
     local lock_ratio=$(( pass * 100 / passes ))
 
@@ -111,15 +130,12 @@ banner() {
         if [ "$ch" = " " ]; then
           output+=" "
         elif (( (RANDOM % 100) < lock_ratio )); then
-          # Locked — show real character
           output+="${ch}"
         else
-          # Still scrambled
           output+="${glyphs[$((RANDOM % nglyphs))]}"
         fi
       done
-      # Brighten as we approach final
-      if (( pass >= passes - 1 )); then
+      if (( pass >= passes - 2 )); then
         echo -e "${B}${P}${output}${R}"
       elif (( pass >= passes / 2 )); then
         echo -e "${P}${output}${R}"
@@ -127,7 +143,7 @@ banner() {
         echo -e "${PD}${output}${R}"
       fi
     done
-    sleep 0.07
+    sleep 0.05
   done
 
   # Final clean pass — ensure 100% correct
