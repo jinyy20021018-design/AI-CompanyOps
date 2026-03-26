@@ -58,12 +58,12 @@ spin() {
 
 # ── Banner ────────────────────────────────────────
 banner() {
-  local C1='\033[38;5;196m'  # red
-  local C2='\033[38;5;197m'  # rose
-  local C3='\033[38;5;162m'  # hot pink
-  local C4='\033[38;5;133m'  # magenta
-  local C5='\033[38;5;134m'  # purple
-  local C6='\033[38;5;99m'   # violet
+  local C1='\033[38;5;55m'   # deep purple
+  local C2='\033[38;5;92m'   # medium purple
+  local C3='\033[38;5;129m'  # bright purple
+  local C4='\033[38;5;135m'  # orchid
+  local C5='\033[38;5;141m'  # light purple
+  local C6='\033[38;5;183m'  # lavender
   local R="$RESET"
   local B="$BOLD"
 
