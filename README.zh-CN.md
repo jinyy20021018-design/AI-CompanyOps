@@ -16,7 +16,7 @@
 
 ## 快速开始
 
-前置要求：[Node.js](https://nodejs.org/)（v20+）、[Docker Desktop](https://www.docker.com/products/docker-desktop/)（已启动）、[Claude Code](https://claude.ai/code)（已登录）
+前置要求：[Node.js](https://nodejs.org/)（v20 或 v22 LTS）、[Docker Desktop](https://www.docker.com/products/docker-desktop/)（已启动）、[Claude Code](https://claude.ai/code)（已登录）
 
 ```bash
 git clone https://github.com/ZihaoChenz/CoAgents.git

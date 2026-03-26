@@ -191,7 +191,30 @@ do_wizard() {
   sleep 0.3
 
   local missing=0
-  command -v node &>/dev/null && ok "Node.js $(node -v)" || { fail "Node.js not found — install from https://nodejs.org"; missing=1; }
+
+  # Node.js check + version validation
+  if command -v node &>/dev/null; then
+    local node_ver
+    node_ver=$(node -v | sed 's/v//')
+    local node_major
+    node_major=$(echo "$node_ver" | cut -d. -f1)
+    if [ "$node_major" -gt 22 ]; then
+      warn "Node.js v${node_ver} detected — too new, may cause native module issues"
+      echo -e "    ${DIM}CoAgent requires Node.js v20 or v22 (LTS).${RESET}"
+      echo -e "    ${DIM}Install v22: ${CYAN}https://nodejs.org${RESET}"
+      echo -e "    ${DIM}Or via nvm: ${CYAN}nvm install 22 && nvm use 22${RESET}"
+      missing=1
+    elif [ "$node_major" -lt 18 ]; then
+      fail "Node.js v${node_ver} is too old — need v20+"
+      missing=1
+    else
+      ok "Node.js v${node_ver}"
+    fi
+  else
+    fail "Node.js not found — install from https://nodejs.org"
+    missing=1
+  fi
+
   command -v docker &>/dev/null && ok "Docker $(docker --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')" || { fail "Docker not found — install Docker Desktop"; missing=1; }
 
   if [ ! -d "$HONCHO_DIR" ] || [ -z "$HONCHO_DIR" ]; then
@@ -288,9 +311,26 @@ do_wizard() {
 
   # npm
   if [ ! -d "$CLI_DIR/backend/node_modules" ]; then
-    spin "Installing backend dependencies" bash -c "cd '$CLI_DIR' && npm install --silent 2>/dev/null && cd backend && npm install --silent 2>/dev/null && cd ../frontend && npm install --silent 2>/dev/null"
+    spin "Installing dependencies" bash -c "cd '$CLI_DIR' && npm install --silent 2>/dev/null && cd backend && npm install --silent 2>/dev/null && cd ../frontend && npm install --silent 2>/dev/null"
   else
     ok "Node dependencies ready"
+  fi
+
+  # Verify node-pty native module (critical for terminal spawning)
+  if ! node -e "require('$CLI_DIR/backend/node_modules/node-pty')" 2>/dev/null; then
+    warn "node-pty native module needs building..."
+    log "Compiling for your architecture (this takes ~15 seconds)..."
+    cd "$CLI_DIR/backend"
+    npx node-gyp rebuild --directory=node_modules/node-pty 2>/dev/null
+    if node -e "require('$CLI_DIR/backend/node_modules/node-pty')" 2>/dev/null; then
+      ok "node-pty compiled successfully"
+    else
+      fail "node-pty compilation failed — terminals won't work"
+      echo -e "    ${DIM}Try: cd backend && npm rebuild node-pty${RESET}"
+      echo -e "    ${DIM}Or install Node.js v22 LTS: https://nodejs.org${RESET}"
+    fi
+  else
+    ok "node-pty native module ready"
   fi
 
   # python
