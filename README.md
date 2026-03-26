@@ -16,60 +16,42 @@ Orchestrate multiple Claude agents in parallel from a visual canvas. Each agent 
 
 ## Quick Start
 
-Prerequisites: [Node.js](https://nodejs.org/) (v20+), [Docker Desktop](https://www.docker.com/products/docker-desktop/), [Claude Code](https://claude.ai/code) (logged in)
+Prerequisites: [Node.js](https://nodejs.org/) (v20+), [Docker Desktop](https://www.docker.com/products/docker-desktop/) (running), [Claude Code](https://claude.ai/code) (logged in)
 
 ```bash
-# Clone both repos as siblings
-git clone <repo-url> coagent
-git clone https://github.com/plastic-labs/honcho.git honcho
-
-# Start
-cd coagent
+git clone https://github.com/ZihaoChenz/CoAgents.git
+cd CoAgents
 ./bin/coagent-cli
 ```
 
-If Honcho is in a different location, set the path:
-```bash
-export COAGENT_HONCHO_DIR="/path/to/honcho"
-./bin/coagent-cli
-```
+That's it. The interactive wizard will guide you through:
+1. Cloning the Honcho memory server (automatic)
+2. Detecting your Claude Code authentication
+3. Getting a free Gemini API key for embeddings
+4. Installing all dependencies (Node.js + Python)
+5. Starting all 6 services and opening the UI
 
-On first run, the CLI will:
-1. Install Node.js dependencies
-2. Install Python dependencies (via uv)
-3. Start PostgreSQL + Redis (Docker)
-4. Run database migrations
-5. Extract your Claude Code OAuth token for LLM access
-6. Start the Honcho memory server + deriver worker
-7. Start the Terminal Canvas frontend + backend
-8. Open http://localhost:5173 in your browser
+### Shortcut (optional)
 
-**One manual step:** You need a free Google Gemini API key for embeddings.
-Get one at [aistudio.google.com/apikey](https://aistudio.google.com/apikey) (no credit card), then add it to `../honcho/.env`:
-
-```
-LLM_GEMINI_API_KEY=your-key-here
-```
-
-### Set up the alias (optional)
+After the first run, set up an alias so you can use `coagent` from anywhere:
 
 ```bash
-echo 'alias coagent="/path/to/cli2/bin/coagent-cli"' >> ~/.zshrc
+echo 'alias coagent="'$(pwd)'/bin/coagent-cli"' >> ~/.zshrc
 source ~/.zshrc
 ```
 
-Then just: `coagent` from anywhere.
-
 ## Commands
 
+All commands can be run as `./bin/coagent-cli <command>` or `coagent <command>` if you set up the alias.
+
 ```
-coagent              Start all services (default)
-coagent stop         Stop all services
-coagent status       Show service health
-coagent restart      Stop then start
-coagent logs         Tail all service logs
-coagent open         Open the UI in browser
-coagent help         Show usage
+./bin/coagent-cli              Start all services (default)
+./bin/coagent-cli stop         Stop all services
+./bin/coagent-cli status       Show service health
+./bin/coagent-cli restart      Stop then start
+./bin/coagent-cli logs         Tail all service logs
+./bin/coagent-cli open         Open the UI in browser
+./bin/coagent-cli setup        Re-run the setup wizard
 ```
 
 ## Architecture

@@ -1,10 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
-import { getHoncho, getAgentPeerId, getCoordinatorPeerId, getProjectSessionId } from "./honchoClient.js";
+import { getHoncho, getAgentPeerId, getCoordinatorPeerId, getProjectSessionId, isHonchoAvailable } from "./honchoClient.js";
 
 /** Record a spawn lifecycle event to Honcho (fire-and-forget) */
 export function recordSpawnEvent(sessionName: string, folderPath: string, label: string): void {
-  if (!process.env.HONCHO_API_KEY) return;
+  if (!isHonchoAvailable()) return;
   (async () => {
     try {
       const honcho = getHoncho();
@@ -25,7 +25,7 @@ export function recordSpawnEvent(sessionName: string, folderPath: string, label:
 
 /** Record an exit lifecycle event to Honcho (fire-and-forget) */
 export function recordExitEvent(sessionName: string, folderPath: string, exitCode: number): void {
-  if (!process.env.HONCHO_API_KEY) return;
+  if (!isHonchoAvailable()) return;
   (async () => {
     try {
       const honcho = getHoncho();
@@ -43,7 +43,7 @@ export function recordExitEvent(sessionName: string, folderPath: string, exitCod
 
 /** Inject cross-project Honcho memory into coordinator CLAUDE.md */
 export async function injectCoordinatorContext(sessionDir: string, folderPath: string): Promise<void> {
-  if (!process.env.HONCHO_API_KEY) return;
+  if (!isHonchoAvailable()) return;
   try {
     const honcho = getHoncho();
     const coordinatorPeer = await honcho.peer(getCoordinatorPeerId(folderPath));

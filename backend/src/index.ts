@@ -17,7 +17,7 @@ import type { ClientMessage, ServerMessage, DirEntry, TerminalRegistryEntry, Art
 import { ScratchpadWatcher, type ScratchpadMessage } from "./scratchpadWatcher.js";
 import { ArtifactWatcher } from "./artifactWatcher.js";
 import { scanClaudeUsage } from "./usageParser.js";
-import { getHoncho, getProjectSessionId } from "./honchoClient.js";
+import { getHoncho, getProjectSessionId, isHonchoAvailable } from "./honchoClient.js";
 import { ensureWorkspace } from "./workspace.js";
 import { createSessionFolder, updateActiveSession, finalizeSession, scanSessionHistory, injectSessionContext } from "./sessionLifecycle.js";
 import { createScratchpadRouter } from "./messageRouting.js";
@@ -569,10 +569,13 @@ wss.on("connection", (ws: WebSocket) => {
           const cwd = sessionDir;
 
           // Inject Honcho cross-project memory into coordinator CLAUDE.md
-          // Must complete before PTY spawn so Claude reads the enriched CLAUDE.md
-          if (sessionType === "coordinator" && process.env.HONCHO_API_KEY) {
+          // Best-effort: try with a 3s timeout so it doesn't block terminal creation
+          if (sessionType === "coordinator" && isHonchoAvailable()) {
             try {
-              await injectCoordinatorContext(sessionDir, folder.path);
+              await Promise.race([
+                injectCoordinatorContext(sessionDir, folder.path),
+                new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 3000)),
+              ]);
             } catch {}
           }
 
