@@ -63,6 +63,30 @@ banner() {
   local B="$BOLD"
   local D="$DIM"
 
+  # Phase 1: Kiwi rolls in from left, bounces, lands at the O position
+  echo ""
+  local kiwi="🥝"
+  local target=12  # column where O starts in the banner
+  local width=50
+
+  # Roll in
+  for (( pos=0; pos<=target; pos++ )); do
+    printf "\r%${pos}s${kiwi}" ""
+    sleep 0.025
+  done
+
+  # Little bounce
+  for p in $((target-1)) $((target+1)) $target; do
+    printf "\r%${width}s" ""  # clear
+    printf "\r%${p}s${kiwi}" ""
+    sleep 0.06
+  done
+
+  sleep 0.12
+
+  # Phase 2: Kiwi transforms — wipe line and reveal banner
+  printf "\r%${width}s\r" ""  # clear the kiwi line
+
   local lines=(
     "   ██████╗  ██████╗   █████╗   ██████╗  ███████╗ ███╗   ██╗ ████████╗"
     "  ██╔════╝ ██╔═══██╗ ██╔══██╗ ██╔════╝  ██╔════╝ ████╗  ██║ ╚══██╔══╝"
@@ -72,9 +96,8 @@ banner() {
     "   ╚═════╝  ╚═════╝  ╚═╝  ╚═╝  ╚═════╝  ╚══════╝ ╚═╝  ╚═══╝    ╚═╝   "
   )
 
-  # Drop-in: each line appears with increasing speed
-  echo ""
-  local delays=(0.08 0.06 0.05 0.04 0.03 0.02)
+  # Banner appears line by line, fast
+  local delays=(0.06 0.04 0.03 0.03 0.02 0.02)
   local i=0
   for line in "${lines[@]}"; do
     echo -e "${B}${P}${line}${R}"
@@ -82,25 +105,17 @@ banner() {
     i=$((i + 1))
   done
 
-  sleep 0.15
+  sleep 0.12
 
-  # Tagline types in
+  # Phase 3: Tagline types in with kiwi at the end
   local tagline="Multi-agent terminal canvas with semantic memory"
   echo -ne "\n  ${D}"
   for (( i=0; i<${#tagline}; i++ )); do
     echo -n "${tagline:$i:1}"
     sleep 0.012
   done
-  echo -e "${R}"
+  echo -e " ${kiwi}${R}"
 
-  # Sparkle trail
-  local sparks=("·" "✧" "✦" "✧" "·")
-  echo -ne "  "
-  for s in "${sparks[@]}"; do
-    echo -ne "${P}${s}${R} "
-    sleep 0.08
-  done
-  echo ""
   echo ""
 }
 
