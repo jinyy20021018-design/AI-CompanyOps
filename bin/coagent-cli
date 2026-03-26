@@ -19,9 +19,10 @@ head() { echo -e "\n${BOLD}$1${RESET}"; }
 usage() {
   echo -e "${BOLD}CoAgent${RESET} — Multi-agent terminal canvas with semantic memory"
   echo ""
-  echo "Usage: coagent <command>"
+  echo "Usage: coagent [command]"
   echo ""
   echo "Commands:"
+  echo "  (default)   Start all services (same as 'start')"
   echo "  start       Start all services (Docker, Honcho, Terminal Canvas)"
   echo "  stop        Stop all services"
   echo "  status      Show service health"
@@ -193,17 +194,18 @@ do_open() {
   for p in 5173 5174 5175; do
     lsof -ti :$p > /dev/null 2>&1 && open "http://localhost:$p" && exit 0
   done
-  fail "Frontend not running. Start with: coagent start"
+  fail "Frontend not running. Start with: coagent"
   exit 1
 }
 
-# Main
-case "${1:-}" in
+# Main — bare `coagent` defaults to start
+case "${1:-start}" in
   start)   do_start ;;
   stop)    do_stop ;;
   status)  do_status ;;
   restart) do_stop; echo ""; do_start ;;
   logs)    do_logs ;;
   open)    do_open ;;
-  *)       usage ;;
+  help|-h|--help) usage ;;
+  *)       echo "Unknown command: $1"; usage; exit 1 ;;
 esac
