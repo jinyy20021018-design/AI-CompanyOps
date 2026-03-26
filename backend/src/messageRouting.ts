@@ -3,7 +3,7 @@ import path from "node:path";
 import type { ScratchpadMessage } from "./scratchpadWatcher.js";
 import type { ScratchpadEntry } from "./protocol.js";
 import type { ServerContext } from "./serverContext.js";
-import { getHoncho, getAgentPeerId, getProjectSessionId } from "./honchoClient.js";
+import { getHoncho, getAgentPeerId, getProjectSessionId, isHonchoAvailable } from "./honchoClient.js";
 
 /**
  * Create a reusable scratchpad message routing callback.
@@ -94,7 +94,7 @@ export function createScratchpadRouter(
     }
 
     // Record message to Honcho for semantic memory
-    if (process.env.HONCHO_API_KEY) {
+    if (isHonchoAvailable()) {
       (async () => {
         try {
           const honcho = getHoncho();

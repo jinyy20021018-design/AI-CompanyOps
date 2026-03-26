@@ -2,12 +2,18 @@ import { Honcho } from "@honcho-ai/sdk";
 
 let _honcho: Honcho | null = null;
 
+export function isHonchoAvailable(): boolean {
+  return !!(process.env.HONCHO_API_KEY && process.env.HONCHO_API_KEY !== "" && process.env.HONCHO_BASE_URL);
+}
+
 export function getHoncho(): Honcho {
   if (!_honcho) {
     _honcho = new Honcho({
       workspaceId: "terminal-canvas",
       apiKey: process.env.HONCHO_API_KEY,
       baseURL: process.env.HONCHO_BASE_URL || "https://api.honcho.dev",
+      timeout: 5000,
+      maxRetries: 0,
     });
   }
   return _honcho;

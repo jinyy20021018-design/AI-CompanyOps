@@ -16,60 +16,42 @@
 
 ## 快速开始
 
-前置要求：[Node.js](https://nodejs.org/)（v20+）、[Docker Desktop](https://www.docker.com/products/docker-desktop/)、[Claude Code](https://claude.ai/code)（已登录）
+前置要求：[Node.js](https://nodejs.org/)（v20+）、[Docker Desktop](https://www.docker.com/products/docker-desktop/)（已启动）、[Claude Code](https://claude.ai/code)（已登录）
 
 ```bash
-# 克隆两个仓库为并列目录
-git clone <仓库地址> coagent
-git clone https://github.com/plastic-labs/honcho.git honcho
-
-# 启动
-cd coagent
+git clone https://github.com/ZihaoChenz/CoAgents.git
+cd CoAgents
 ./bin/coagent-cli
 ```
 
-如果 Honcho 在其他位置，设置路径：
-```bash
-export COAGENT_HONCHO_DIR="/path/to/honcho"
-./bin/coagent-cli
-```
+就这样。交互式向导会引导你完成：
+1. 自动克隆 Honcho 记忆服务器
+2. 检测你的 Claude Code 认证
+3. 获取免费的 Gemini API 密钥（用于向量嵌入）
+4. 安装所有依赖（Node.js + Python）
+5. 启动全部 6 个服务并打开界面
 
-首次运行时，CLI 会自动：
-1. 安装 Node.js 依赖
-2. 安装 Python 依赖（通过 uv）
-3. 启动 PostgreSQL + Redis（Docker）
-4. 运行数据库迁移
-5. 从 Claude Code 钥匙串提取 OAuth 令牌用于 LLM 调用
-6. 启动 Honcho 记忆服务器 + 推导工人
-7. 启动 Terminal Canvas 前后端
-8. 自动打开 http://localhost:5173
+### 设置快捷命令（可选）
 
-**唯一手动步骤：** 需要一个免费的 Google Gemini API 密钥用于向量嵌入。
-在 [aistudio.google.com/apikey](https://aistudio.google.com/apikey) 获取（无需信用卡），然后添加到 `../honcho/.env`：
-
-```
-LLM_GEMINI_API_KEY=你的密钥
-```
-
-### 设置别名（可选）
+首次运行后，设置别名以便在任何地方使用 `coagent`：
 
 ```bash
-echo 'alias coagent="/你的路径/cli2/bin/coagent-cli"' >> ~/.zshrc
+echo 'alias coagent="'$(pwd)'/bin/coagent-cli"' >> ~/.zshrc
 source ~/.zshrc
 ```
 
-之后在任何地方输入 `coagent` 即可。
-
 ## 命令
 
+所有命令可以用 `./bin/coagent-cli <命令>` 运行，或设置别名后用 `coagent <命令>`。
+
 ```
-coagent              启动所有服务（默认）
-coagent stop         停止所有服务
-coagent status       查看服务健康状态
-coagent restart      重启所有服务
-coagent logs         查看实时日志
-coagent open         打开浏览器界面
-coagent help         显示帮助
+./bin/coagent-cli              启动所有服务（默认）
+./bin/coagent-cli stop         停止所有服务
+./bin/coagent-cli status       查看服务健康状态
+./bin/coagent-cli restart      重启所有服务
+./bin/coagent-cli logs         查看实时日志
+./bin/coagent-cli open         打开浏览器界面
+./bin/coagent-cli setup        重新运行设置向导
 ```
 
 ## 架构
