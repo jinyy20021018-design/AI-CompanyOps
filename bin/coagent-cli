@@ -1,8 +1,8 @@
 #!/bin/bash
-set -euo pipefail
+set -uo pipefail
 
 CLI_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-HONCHO_DIR="$(cd "$CLI_DIR/../honcho" 2>/dev/null && pwd || echo "")"
+HONCHO_DIR="${COAGENT_HONCHO_DIR:-/Users/enicul/Documents/CoAgent/honcho}"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
