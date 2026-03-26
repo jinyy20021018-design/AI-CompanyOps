@@ -7,3 +7,4 @@ folders.json
 .env
 .env.local
 *.tsbuildinfo
+.gstack/
