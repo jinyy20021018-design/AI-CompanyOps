@@ -158,9 +158,17 @@ export class PtyManager {
   }
 
   write(id: string, data: string): void {
-    // Normalize trailing \n to \r so PTY submissions never stall
-    if (data.endsWith("\n") && !data.endsWith("\r\n")) {
-      data = data.slice(0, -1) + "\r";
+    // Skip normalization for raw user input (single chars, control sequences)
+    // Only normalize programmatic writes that look like complete messages
+    if (data.length > 1 && !data.includes("\x1b")) {
+      // Replace all internal \n with \r (PTY needs carriage return, not newline)
+      data = data.replace(/\n/g, "\r");
+      // Ensure it ends with \r so the input is always submitted
+      if (!data.endsWith("\r")) {
+        data += "\r";
+      }
+      // Collapse multiple trailing \r into one
+      data = data.replace(/\r+$/, "\r");
     }
     this.sessions.get(id)?.process.write(data);
   }
