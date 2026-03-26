@@ -1,4 +1,4 @@
-import { useRef, useState, useCallback, type ReactNode } from "react";
+import { useRef, useState, useCallback, useEffect, type ReactNode } from "react";
 import { MessageBar } from "./MessageBar";
 import type { TerminalWindowModel } from "../types";
 
@@ -49,11 +49,20 @@ export function TerminalWindow({
     startW: number;
     startH: number;
   } | null>(null);
+  const windowRef = useRef<HTMLDivElement>(null);
 
   const isCoordinator = model.tag === "coordinator";
   const [editingName, setEditingName] = useState(false);
   const [nameInput, setNameInput] = useState(model.title);
   const [showAllArtifacts, setShowAllArtifacts] = useState(false);
+
+  // Sync position from React state to DOM (when model.x/y change externally)
+  useEffect(() => {
+    if (windowRef.current && !dragState.current) {
+      windowRef.current.style.left = `${model.x}px`;
+      windowRef.current.style.top = `${model.y}px`;
+    }
+  }, [model.x, model.y]);
 
   const handlePointerDown = useCallback(
     (e: React.PointerEvent) => {
@@ -66,15 +75,27 @@ export function TerminalWindow({
         originY: model.y,
       };
 
+      const el = windowRef.current;
+
       const handlePointerMove = (ev: PointerEvent) => {
-        if (!dragState.current) return;
+        if (!dragState.current || !el) return;
         const dx = ev.clientX - dragState.current.startX;
         const dy = ev.clientY - dragState.current.startY;
-        onMove(model.id, dragState.current.originX + dx, dragState.current.originY + dy);
+        // Direct DOM update — no React re-render during drag
+        el.style.left = `${dragState.current.originX + dx}px`;
+        el.style.top = `${dragState.current.originY + dy}px`;
       };
 
-      const handlePointerUp = () => {
-        dragState.current = null;
+      const handlePointerUp = (ev: PointerEvent) => {
+        if (dragState.current) {
+          const dx = ev.clientX - dragState.current.startX;
+          const dy = ev.clientY - dragState.current.startY;
+          const finalX = dragState.current.originX + dx;
+          const finalY = dragState.current.originY + dy;
+          dragState.current = null;
+          // Commit final position to React state (single re-render)
+          onMove(model.id, finalX, finalY);
+        }
         window.removeEventListener("pointermove", handlePointerMove);
         window.removeEventListener("pointerup", handlePointerUp);
       };
@@ -101,8 +122,8 @@ export function TerminalWindow({
         if (!resizeState.current) return;
         const dx = ev.clientX - resizeState.current.startX;
         const dy = ev.clientY - resizeState.current.startY;
-        const newW = Math.max(280, resizeState.current.startW + dx);
-        const newH = Math.max(200, resizeState.current.startH + dy);
+        const newW = Math.max(220, resizeState.current.startW + dx);
+        const newH = Math.max(150, resizeState.current.startH + dy);
         onResize(model.id, newW, newH);
       };
 
@@ -120,6 +141,7 @@ export function TerminalWindow({
 
   return (
     <div
+      ref={windowRef}
       className={`terminal-window${isCoordinator ? " terminal-window-coordinator" : ""}${model.exited ? " state-exited" : model.waitingForHuman ? " state-waiting" : model.active ? " state-active" : " state-idle"}${model.needsAttention ? " state-attention" : ""}`}
       style={{
         left: model.x,
