@@ -14,6 +14,7 @@ import { SpawnMenu, type SpawnOption } from "./components/SpawnMenu";
 import { ArtifactViewer } from "./components/ArtifactViewer";
 import { SettingsPanel, type CoordinatorEngine, type CanvasTheme } from "./components/SettingsPanel";
 import { ChatPanel } from "./components/ChatPanel";
+import { FileBrowser } from "./components/FileBrowser";
 import { findFreePosition, arrangeTerminals, nudgeOverlaps } from "./utils/placement";
 // Shared
 import { TerminalPane } from "./components/TerminalPane";
@@ -46,7 +47,7 @@ export default function App() {
   );
 
   // Structured mode state
-  const [viewMode, setViewMode] = useState<"overview" | "focus">("overview");
+  const [viewMode, setViewMode] = useState<"overview" | "focus" | "files">("overview");
   const [focusedTerminalId, setFocusedTerminalId] = useState<string | null>(null);
 
   // Canvas mode state
@@ -742,6 +743,8 @@ export default function App() {
           <div className="content-area">
             {viewMode === "overview" ? (
               <OverviewGrid coordinator={coordinator} agents={agents} focusedTerminalId={focusedTerminalId} viewMode={viewMode} onAgentClick={handleAgentClick} onClose={handleClose} onRename={handleRename} onPromote={handlePromote} onArtifactClick={handleArtifactClick} send={send} addHandler={addHandler} theme={canvasTheme} />
+            ) : viewMode === "files" ? (
+              <FileBrowser terminals={allActiveTerminals} send={send} addHandler={addHandler} />
             ) : (
               focusedTerminal && <FocusView terminal={focusedTerminal} onRename={handleRename} onPromote={handlePromote} onBack={() => setViewMode("overview")} send={send} addHandler={addHandler} theme={canvasTheme} />
             )}
