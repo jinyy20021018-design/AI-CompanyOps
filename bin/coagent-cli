@@ -199,10 +199,14 @@ do_wizard() {
     local node_major
     node_major=$(echo "$node_ver" | cut -d. -f1)
     if [ "$node_major" -gt 22 ]; then
-      warn "Node.js v${node_ver} detected — too new, may cause native module issues"
-      echo -e "    ${DIM}CoAgent requires Node.js v20 or v22 (LTS).${RESET}"
-      echo -e "    ${DIM}Install v22: ${CYAN}https://nodejs.org${RESET}"
+      warn "Node.js v${node_ver} detected — too new for native modules"
+      echo -e "    ${DIM}CoAgent requires Node.js v20 or v22 LTS. Fix with:${RESET}"
+      echo ""
+      echo -e "    ${CYAN}brew install node@22${RESET}"
+      echo -e "    ${CYAN}brew unlink node && brew link --overwrite node@22${RESET}"
+      echo ""
       echo -e "    ${DIM}Or via nvm: ${CYAN}nvm install 22 && nvm use 22${RESET}"
+      echo -e "    ${DIM}Then re-run: ${CYAN}./bin/coagent-cli${RESET}"
       missing=1
     elif [ "$node_major" -lt 18 ]; then
       fail "Node.js v${node_ver} is too old — need v20+"
