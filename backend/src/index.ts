@@ -286,6 +286,28 @@ const server = http.createServer((req, res) => {
         }
       })();
     });
+  } else if (req.method === "POST" && req.url === "/pick-folder") {
+    // Open native macOS folder picker dialog
+    const { execSync } = require("child_process");
+    try {
+      const result = execSync(
+        `osascript -e 'set theFolder to choose folder with prompt "Choose a project folder for CoAgent"' -e 'POSIX path of theFolder'`,
+        { encoding: "utf-8", timeout: 60000 }
+      ).trim();
+      if (result) {
+        // Remove trailing slash
+        const folderPath = result.endsWith("/") ? result.slice(0, -1) : result;
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ path: folderPath }));
+      } else {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ path: null, cancelled: true }));
+      }
+    } catch {
+      // User cancelled the dialog or osascript not available
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ path: null, cancelled: true }));
+    }
   } else {
     res.writeHead(404);
     res.end();
