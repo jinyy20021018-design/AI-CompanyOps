@@ -605,6 +605,20 @@ export default function App() {
     setTerminals((prev) => prev.map((t) => (t.id === id && (t.unreadCount ?? 0) > 0 ? { ...t, unreadCount: 0 } : t)));
   }, []);
 
+  const handlePickFolder = useCallback(async () => {
+    try {
+      const res = await fetch("http://localhost:3001/pick-folder", { method: "POST" });
+      const data = await res.json();
+      if (data.path) {
+        send({ type: "folder:add", path: data.path });
+      }
+    } catch {
+      // Fallback: prompt for path
+      const path = window.prompt("Enter a project folder path:");
+      if (path) send({ type: "folder:add", path });
+    }
+  }, [send]);
+
   const handleNewAgent = useCallback(() => {
     if (!activeId) return;
     const provider = (activeFolder?.defaultProvider ?? "claude") as "claude" | "codex";
@@ -730,6 +744,19 @@ export default function App() {
             send={send}
             layoutToggle={layoutToggle}
           />
+          {!activeId ? (
+            <div className="welcome-screen">
+              <div className="welcome-content">
+                <div className="welcome-icon">📂</div>
+                <h2 className="welcome-title">Choose a project folder</h2>
+                <p className="welcome-desc">CoAgent needs a project folder to start orchestrating agents.</p>
+                <button className="welcome-pick-btn" onClick={handlePickFolder}>
+                  Open folder...
+                </button>
+                <p className="welcome-hint">or drag a folder from Finder into the terminal</p>
+              </div>
+            </div>
+          ) : <>
           {viewMode === "overview" && (
             <CoordinatorBar
               coordinator={coordinator}
@@ -749,6 +776,7 @@ export default function App() {
               focusedTerminal && <FocusView terminal={focusedTerminal} onRename={handleRename} onPromote={handlePromote} onBack={() => setViewMode("overview")} send={send} addHandler={addHandler} theme={canvasTheme} />
             )}
           </div>
+          </>}
         </div>
         {artifactViewer && (
           <div className="artifact-modal-overlay" onClick={handleArtifactClose}>

@@ -148,6 +148,70 @@ html, body, #root {
   min-width: 0;
 }
 
+/* ── Welcome screen (no folder selected) ─────────────── */
+.welcome-screen {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.welcome-content {
+  text-align: center;
+  max-width: 360px;
+}
+
+.welcome-icon {
+  font-size: 48px;
+  margin-bottom: var(--sp-4);
+}
+
+.welcome-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: var(--sp-2);
+  font-family: var(--font-mono);
+}
+
+.welcome-desc {
+  font-size: var(--text-md);
+  color: var(--text-secondary);
+  margin-bottom: var(--sp-5);
+  line-height: 1.5;
+}
+
+.welcome-pick-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-3) var(--sp-5);
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-md);
+  font-size: var(--text-lg);
+  font-weight: 600;
+  font-family: var(--font-mono);
+  cursor: pointer;
+  transition: background var(--duration-fast), transform var(--duration-fast);
+}
+
+.welcome-pick-btn:hover {
+  background: var(--accent-strong);
+  transform: translateY(-1px);
+}
+
+.welcome-pick-btn:active {
+  transform: translateY(0);
+}
+
+.welcome-hint {
+  font-size: var(--text-xs);
+  color: var(--text-disabled);
+  margin-top: var(--sp-3);
+}
+
 /* ── Top nav (combined folder selector + workspace info) ── */
 .top-nav {
   padding: 0 var(--sp-3);
