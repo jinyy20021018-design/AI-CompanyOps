@@ -152,6 +152,12 @@ export default function App() {
         case "folder:removed":
           setFolders((prev) => prev.filter((f) => f.id !== msg.pathId));
           setActiveId((prev) => (prev === msg.pathId ? null : prev));
+          // Clear coordinator tracking so it re-spawns if folder is re-added
+          coordinatorSpawnedRef.current.delete(msg.pathId);
+          coordinatorHasExistedRef.current.delete(msg.pathId);
+          restoredFoldersRef.current.delete(msg.pathId);
+          // Remove terminals belonging to this folder
+          setTerminals((prev) => prev.filter((t) => t.pathId !== msg.pathId));
           break;
 
         case "folder:error":
