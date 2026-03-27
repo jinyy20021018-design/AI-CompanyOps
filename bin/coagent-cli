@@ -191,34 +191,25 @@ do_wizard() {
   sleep 0.3
 
   local missing=0
-
-  # Node.js check + version validation
   if command -v node &>/dev/null; then
-    local node_ver
-    node_ver=$(node -v | sed 's/v//')
     local node_major
-    node_major=$(echo "$node_ver" | cut -d. -f1)
-    if [ "$node_major" -gt 22 ]; then
-      warn "Node.js v${node_ver} detected — too new for native modules"
-      echo -e "    ${DIM}CoAgent requires Node.js v20 or v22 LTS. Fix with:${RESET}"
-      echo ""
-      echo -e "    ${CYAN}brew install node@22${RESET}"
-      echo -e "    ${CYAN}brew unlink node && brew link --overwrite node@22${RESET}"
-      echo ""
-      echo -e "    ${DIM}Or via nvm: ${CYAN}nvm install 22 && nvm use 22${RESET}"
-      echo -e "    ${DIM}Then open a new terminal and re-run: ${CYAN}./bin/coagent-cli${RESET}"
-      missing=1
-    elif [ "$node_major" -lt 18 ]; then
-      fail "Node.js v${node_ver} is too old — need v20+"
+    node_major=$(node -v | grep -oE '[0-9]+' | head -1)
+    if [ "$node_major" -lt 20 ] || [ "$node_major" -gt 24 ]; then
+      fail "Node.js $(node -v) — requires v20–v24"
+      echo -e "    ${DIM}Recommended: install nvm and switch versions:${RESET}"
+      echo -e "    ${CYAN}curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash${RESET}"
+      echo -e "    ${CYAN}nvm install 22 && nvm use 22${RESET}"
       missing=1
     else
-      ok "Node.js v${node_ver}"
+      ok "Node.js $(node -v)"
     fi
   else
-    fail "Node.js not found — install from https://nodejs.org"
+    fail "Node.js not found — requires v20–v24"
+    echo -e "    ${DIM}Install via nvm (recommended):${RESET}"
+    echo -e "    ${CYAN}curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash${RESET}"
+    echo -e "    ${CYAN}nvm install 22${RESET}"
     missing=1
   fi
-
   command -v docker &>/dev/null && ok "Docker $(docker --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')" || { fail "Docker not found — install Docker Desktop"; missing=1; }
 
   if [ ! -d "$HONCHO_DIR" ] || [ -z "$HONCHO_DIR" ]; then

@@ -16,7 +16,7 @@
 
 ## 快速开始
 
-前置要求：[Node.js](https://nodejs.org/)（v20 或 v22 LTS）、[Docker Desktop](https://www.docker.com/products/docker-desktop/)（已启动）、[Claude Code](https://claude.ai/code)（已登录）
+前置要求：[Node.js](https://nodejs.org/)（v20–v24）、[Docker Desktop](https://www.docker.com/products/docker-desktop/)（已启动）、[Claude Code](https://claude.ai/code)（已登录）
 
 ```bash
 git clone https://github.com/ZihaoChenz/CoAgents.git
@@ -30,6 +30,8 @@ cd CoAgents
 3. 获取免费的 Gemini API 密钥（用于向量嵌入）
 4. 安装所有依赖（Node.js + Python）
 5. 启动全部 6 个服务并打开界面
+
+重新运行向导：`./bin/coagent-cli setup`
 
 ### 设置快捷命令（可选）
 
@@ -144,6 +146,19 @@ cli2/
 3. 通过 WebSocket 广播到界面
 4. 记录到 Honcho 用于语义记忆
 5. 如果目标空闲，注入到其 PTY 终端
+
+### 记忆层级
+
+每个智能体拥有四层记忆，从最即时到最语义化：
+
+| 层级 | 来源 | 机制 | 范围 |
+|------|------|------|------|
+| **会话历史** | Claude `--resume` | 内置对话回放 | 当前会话 |
+| **Honcho 观察结论** | `honchoIntegration.ts` | 跨项目语义观察，启动时写入 `CLAUDE.md` | 所有项目 |
+| **近期上下文** | `notes.md` / `memory.md` | 最近 15 行以 `## Recent Context` 追加到 `CLAUDE.md` | 当前会话 |
+| **按需召回** | `coagent recall` | 通过 Honcho Dialectic API 语义搜索 | 所有项目 |
+
+当 PTY 仍然存活时重连，无需注入上下文——Claude 已通过 `--resume` 拥有完整对话。当后端重启导致全新启动时，近期上下文会写入 `CLAUDE.md`，Claude 启动时自动读取。
 
 ### 记忆流水线
 
