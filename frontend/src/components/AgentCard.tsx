@@ -28,7 +28,7 @@ type Props = {
   theme?: "dark" | "light";
 };
 
-export function AgentCard({ model, isFocused, viewMode, onClick, onClose, onRename, onPromote, onArtifactClick, send, addHandler, theme }: Props) {
+export function AgentCard({ model, isFocused, viewMode, onClick, onClose: _onClose, onRename, onPromote, onArtifactClick, send, addHandler, theme }: Props) {
   const [expanded, setExpanded] = useState(true);
   const [editing, setEditing] = useState(false);
   const [nameInput, setNameInput] = useState(model.title);
@@ -156,13 +156,7 @@ export function AgentCard({ model, isFocused, viewMode, onClick, onClose, onRena
                 Kill
               </button>
             )}
-            <button
-              className="agent-card-close"
-              onClick={(e) => { e.stopPropagation(); onClose(model.id); }}
-              title="Close terminal"
-            >
-              Close
-            </button>
+            {/* Close button removed — terminals are fixed */}
           </>
         )}
       </div>

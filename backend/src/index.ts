@@ -1,5 +1,6 @@
 import http from "node:http";
 import { WebSocketServer, WebSocket } from "ws";
+import { execSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -37,6 +38,17 @@ const watchedDirCounts = new Map<string, number>();
 const pendingNotifications = new Map<string, ScratchpadMessage[]>();
 
 const server = http.createServer((req, res) => {
+  // CORS headers for cross-origin requests from frontend
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+
+  if (req.method === "OPTIONS") {
+    res.writeHead(204);
+    res.end();
+    return;
+  }
+
   if (req.method === "POST" && req.url === "/usage") {
     let body = "";
     req.on("data", (chunk) => { body += chunk; });
@@ -288,7 +300,6 @@ const server = http.createServer((req, res) => {
     });
   } else if (req.method === "POST" && req.url === "/pick-folder") {
     // Open native macOS folder picker dialog
-    const { execSync } = require("child_process");
     try {
       const result = execSync(
         `osascript -e 'set theFolder to choose folder with prompt "Choose a project folder for CoAgent"' -e 'POSIX path of theFolder'`,
@@ -559,8 +570,10 @@ wss.on("connection", (ws: WebSocket) => {
       }
 
       case "terminal:create": {
+        console.log("[Backend] terminal:create received", msg.pathId, msg.role);
         const folder = registry.resolve(msg.pathId);
         if (!folder) {
+          console.log("[Backend] Unknown folder ID:", msg.pathId);
           send(ws, {
             type: "terminal:error",
             terminalId: "",
@@ -604,6 +617,7 @@ wss.on("connection", (ws: WebSocket) => {
           // Snapshot existing Claude sessions before spawning so we can identify the new UUID
           const claudeSessionsBefore = snapshotClaudeSessions(cwd);
 
+          console.log("[Backend] Creating PTY for", sessionType, "in", cwd);
           const session = ptyManager.create(
             msg.pathId,
             cwd,
@@ -697,6 +711,7 @@ wss.on("connection", (ws: WebSocket) => {
           }
           watchedDirCounts.set(sharedDir, count + 1);
 
+          console.log("[Backend] Sending terminal:created", session.id, sessionType);
           send(ws, {
             type: "terminal:created",
             terminalId: session.id,
@@ -725,6 +740,7 @@ wss.on("connection", (ws: WebSocket) => {
             });
           }
         } catch (err) {
+          console.error("[Backend] terminal:create FAILED:", err);
           send(ws, {
             type: "terminal:error",
             terminalId: "",

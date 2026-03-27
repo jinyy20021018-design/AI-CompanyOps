@@ -29,7 +29,7 @@ export function TerminalWindow({
   model,
   onMove,
   onResize,
-  onClose,
+  onClose: _onClose,
   onFocus,
   onRename,
   zIndex,
@@ -199,18 +199,7 @@ export function TerminalWindow({
             </svg>
           </button>
         )}
-        {!isCoordinator && (
-          <button
-            className="terminal-window-close-btn"
-            onClick={(e) => {
-              e.stopPropagation();
-              onClose(model.id);
-            }}
-            title="Close"
-          >
-            ×
-          </button>
-        )}
+        {/* Close button removed — terminals are fixed */}
       </div>
       <MessageBar messages={model.messages ?? []} />
       <div className="terminal-window-body">

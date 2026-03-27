@@ -47,13 +47,11 @@ type Props = {
 };
 
 export function TopNav({
-  folders, activeFolder, activeId, onSelectFolder, onAddFolder, onRemoveFolder, folderError,
+  folders, activeFolder, activeId, onSelectFolder, onAddFolder: _onAddFolder, onRemoveFolder, folderError,
   costSummary, viewMode, onViewModeChange, onOpenSettings, onOpenChat, send, layoutToggle,
 }: Props) {
   const [showCostPanel, setShowCostPanel] = useState(false);
-  const [showAddFolder, setShowAddFolder] = useState(false);
   const [showFolderDropdown, setShowFolderDropdown] = useState(false);
-  const [addInput, setAddInput] = useState("");
   const panelRef = useRef<HTMLDivElement>(null);
   const folderDropdownRef = useRef<HTMLDivElement>(null);
 
@@ -92,15 +90,6 @@ export function TopNav({
   const maxModelCost = modelEntries.length > 0 ? modelEntries[0][1].cost_usd : 1;
   const maxSessionCost = sessionEntries.length > 0 ? sessionEntries[0][1].cost_usd : 1;
 
-  const handleAddSubmit = () => {
-    const trimmed = addInput.trim();
-    if (trimmed) {
-      onAddFolder(trimmed);
-      setAddInput("");
-      setShowAddFolder(false);
-    }
-  };
-
   return (
     <div className="top-nav">
       {/* Folder selector area */}
@@ -134,11 +123,6 @@ export function TopNav({
             </div>
           )}
         </div>
-        {activeId && (
-          <button className="top-nav-folder-remove" onClick={() => onRemoveFolder(activeId)} title="Remove folder">
-            ×
-          </button>
-        )}
         {activeFolder && (
           <span
             className="top-nav-provider"
@@ -151,26 +135,10 @@ export function TopNav({
             {(activeFolder.defaultProvider ?? "claude") === "claude" ? "Claude" : "Codex"}
           </span>
         )}
-        <button
-          className="top-nav-folder-add-btn"
-          onClick={() => setShowAddFolder((v) => !v)}
-          title="Add folder"
-        >
-          +
-        </button>
-        {showAddFolder && (
-          <div className="top-nav-add-popover">
-            <input
-              type="text"
-              className="top-nav-add-input"
-              placeholder="Folder path..."
-              value={addInput}
-              onChange={(e) => setAddInput(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") handleAddSubmit(); if (e.key === "Escape") setShowAddFolder(false); }}
-              autoFocus
-            />
-            <button className="top-nav-add-submit" onClick={handleAddSubmit}>Add</button>
-          </div>
+        {activeId && (
+          <button className="top-nav-folder-remove" onClick={() => onRemoveFolder(activeId)} title="Change folder">
+            ×
+          </button>
         )}
       </div>
 

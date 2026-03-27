@@ -11,7 +11,7 @@ type Props = {
   onNewAgent: () => void;
 };
 
-export function CoordinatorBar({ coordinator, agents, focusedTerminalId, onAgentClick, onCoordinatorClick, onNewAgent }: Props) {
+export function CoordinatorBar({ coordinator, agents, focusedTerminalId, onAgentClick, onCoordinatorClick, onNewAgent: _onNewAgent }: Props) {
   const coordStatus = coordinator ? getAgentStatus(coordinator) : "idle";
   const coordDotColor = coordinator ? STATUS_COLORS[coordStatus] : "#545775";
 
@@ -60,9 +60,7 @@ export function CoordinatorBar({ coordinator, agents, focusedTerminalId, onAgent
             onClick={() => onAgentClick(a.id)}
           />
         ))}
-        <button className="agent-strip-add" onClick={onNewAgent} title="Spawn new agent">
-          + New agent
-        </button>
+        {/* Terminals are fixed at 5 — no manual creation */}
         {agents.length > 0 && (
           <div className="coordinator-bar-progress-inline">
             {blockedCount > 0 && (
