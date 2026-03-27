@@ -2,7 +2,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { ensureSessionUsageFile } from "./usageLogger.js";
 import type { TerminalRegistryEntry, SessionHistoryEntry } from "./protocol.js";
-import type { PtyManager } from "./ptyManager.js";
 
 /** Create a session folder and return its path + short name */
 export function createSessionFolder(folderPath: string, terminalId: string, sessionType: string, mode?: "quick" | "role"): { sessionDir: string; sessionName: string } {
@@ -262,20 +261,24 @@ export function scanSessionHistory(folderPath: string, runningTerminals: Termina
   }
 }
 
-/** SessionStart hook: inject last N lines of memory/notes into terminal */
-export function injectSessionContext(terminalId: string, sessionDir: string, ptyManager: PtyManager): void {
+/** Write recent session context to CLAUDE.md instead of injecting into PTY */
+export function writeSessionContext(sessionDir: string): void {
   const memoryPath = path.join(sessionDir, "memory.md");
   const notesPath = path.join(sessionDir, "notes.md");
+  const claudeMdPath = path.join(sessionDir, "CLAUDE.md");
+
   const contextFile = fs.existsSync(memoryPath) ? memoryPath : notesPath;
   try {
     const content = fs.readFileSync(contextFile, "utf-8").trim();
-    if (content) {
-      const lines = content.split("\n");
-      const last30 = lines.slice(-30).join("\n");
-      // Write a comment into the PTY so Claude sees context
-      setTimeout(() => {
-        ptyManager.write(terminalId, `# Previous session context (last ${Math.min(lines.length, 30)} lines):\n# ${last30.replace(/\n/g, "\n# ")}\r`);
-      }, 500);
-    }
+    if (!content) return;
+
+    const lines = content.split("\n");
+    const last15 = lines.slice(-15).join("\n");
+
+    const existing = fs.existsSync(claudeMdPath) ? fs.readFileSync(claudeMdPath, "utf-8") : "";
+    // Don't duplicate — only add if not already present
+    if (existing.includes("## Recent Context")) return;
+
+    fs.writeFileSync(claudeMdPath, existing + `\n\n## Recent Context\n\n${last15}\n`);
   } catch {}
 }

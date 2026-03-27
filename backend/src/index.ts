@@ -19,7 +19,7 @@ import { ArtifactWatcher } from "./artifactWatcher.js";
 import { scanClaudeUsage } from "./usageParser.js";
 import { getHoncho, getProjectSessionId, isHonchoAvailable } from "./honchoClient.js";
 import { ensureWorkspace } from "./workspace.js";
-import { createSessionFolder, updateActiveSession, finalizeSession, scanSessionHistory, injectSessionContext } from "./sessionLifecycle.js";
+import { createSessionFolder, updateActiveSession, finalizeSession, scanSessionHistory, writeSessionContext } from "./sessionLifecycle.js";
 import { createScratchpadRouter } from "./messageRouting.js";
 import { recordSpawnEvent, recordExitEvent, injectCoordinatorContext } from "./honchoIntegration.js";
 
@@ -859,6 +859,9 @@ wss.on("connection", (ws: WebSocket) => {
 
           send(ws, { type: "terminal:reconnected", terminalId: msg.terminalId, pathId: meta.folderPath, bufferedOutput: "" });
 
+          // Write recent session context to CLAUDE.md before auto-resume
+          writeSessionContext(meta.sessionDir);
+
           // Auto-resume the Claude/Codex session
           const provider = entry.provider ?? "claude";
           if (provider === "codex") {
@@ -915,8 +918,7 @@ wss.on("connection", (ws: WebSocket) => {
             pathId: meta.folderPath,
             bufferedOutput,
           });
-          // SessionStart hook: inject context on reconnect
-          injectSessionContext(msg.terminalId, meta.sessionDir, ptyManager);
+          // No context injection needed — Claude already has history via --resume
         }
         break;
       }

@@ -1,5 +1,7 @@
 # CoAgent
 
+[中文文档](./README.zh-CN.md)
+
 **Multi-agent terminal canvas with semantic memory.**
 
 Orchestrate multiple Claude agents in parallel from a visual canvas. Each agent runs in its own terminal, communicates via a shared message bus, and builds long-term memory through Honcho — so knowledge from one project carries over to the next.
@@ -16,7 +18,7 @@ Orchestrate multiple Claude agents in parallel from a visual canvas. Each agent 
 
 ## Quick Start
 
-Prerequisites: [Node.js](https://nodejs.org/) (v20 or v22 LTS), [Docker Desktop](https://www.docker.com/products/docker-desktop/) (running), [Claude Code](https://claude.ai/code) (logged in)
+Prerequisites: [Node.js](https://nodejs.org/) (v20–v24), [Docker Desktop](https://www.docker.com/products/docker-desktop/) (running), [Claude Code](https://claude.ai/code) (logged in)
 
 ```bash
 git clone https://github.com/ZihaoChenz/CoAgents.git
@@ -30,6 +32,8 @@ That's it. The interactive wizard will guide you through:
 3. Getting a free Gemini API key for embeddings
 4. Installing all dependencies (Node.js + Python)
 5. Starting all 6 services and opening the UI
+
+To re-run the wizard: `./bin/coagent-cli setup`
 
 ### Shortcut (optional)
 
@@ -146,6 +150,19 @@ Agents communicate through a shared `scratchpad.jsonl` file. When an agent runs 
 3. Broadcast to the UI via WebSocket
 4. Recorded to Honcho for semantic memory
 5. Injected into the target's PTY if they're idle
+
+### Memory Layers
+
+Each agent has four layers of memory, from most immediate to most semantic:
+
+| Layer | Source | Mechanism | Scope |
+|-------|--------|-----------|-------|
+| **Session history** | Claude `--resume` | Built-in conversation replay | Current session |
+| **Honcho observations** | `honchoIntegration.ts` | Cross-project semantic observations written to `CLAUDE.md` on spawn | All projects |
+| **Recent context** | `notes.md` / `memory.md` | Last 15 lines appended to `CLAUDE.md` as `## Recent Context` on fresh spawn | Current session |
+| **On-demand recall** | `coagent recall` | Semantic search via Honcho Dialectic API | All projects |
+
+On reconnect when the PTY is still alive, no context injection is needed — Claude already has the full conversation via `--resume`. On fresh spawn (backend restart), recent context is written to `CLAUDE.md` so Claude picks it up at startup.
 
 ### Memory Pipeline
 
