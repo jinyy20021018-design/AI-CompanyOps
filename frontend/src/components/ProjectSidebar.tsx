@@ -21,9 +21,9 @@ export function ProjectSidebar({
   folders,
   activeId,
   onSelect,
-  onAdd,
-  onRemove,
-  folderError,
+  onAdd: _onAdd,
+  onRemove: _onRemove,
+  folderError: _folderError,
   terminals,
   focusedTerminalId,
   onTerminalClick,
@@ -31,7 +31,6 @@ export function ProjectSidebar({
   onPromote,
   onCollapse,
 }: Props) {
-  const [inputValue, setInputValue] = useState("");
   const [showFolderDropdown, setShowFolderDropdown] = useState(false);
   const folderDropdownRef = useRef<HTMLDivElement>(null);
 
@@ -47,11 +46,6 @@ export function ProjectSidebar({
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [showFolderDropdown]);
-
-  const handleAdd = () => {
-    const trimmed = inputValue.trim();
-    if (trimmed) { onAdd(trimmed); setInputValue(""); }
-  };
 
   const coordinator = terminals.find((t) => t.tag === "coordinator");
   const workers = terminals.filter((t) => t.tag !== "coordinator");
@@ -91,9 +85,7 @@ export function ProjectSidebar({
             </div>
           )}
         </div>
-        {activeId && (
-          <button className="sidebar-folder-remove" onClick={() => onRemove(activeId)} title="Remove folder">×</button>
-        )}
+        {/* Folder removal disabled — only 1 folder allowed */}
       </div>
 
       {/* Terminal list */}
@@ -128,18 +120,7 @@ export function ProjectSidebar({
         )}
       </div>
 
-      {/* Add folder */}
-      <div className="sidebar-add">
-        <input
-          type="text"
-          placeholder="Add folder path..."
-          value={inputValue}
-          onChange={(e) => setInputValue(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter") handleAdd(); }}
-        />
-        <button onClick={handleAdd}>Add</button>
-      </div>
-      {folderError && <div className="sidebar-error">{folderError}</div>}
+      {/* Add folder input removed — only native picker from welcome screen */}
     </div>
   );
 }
@@ -152,7 +133,7 @@ type RowProps = {
   onPromote: () => void;
 };
 
-function TerminalRow({ terminal, isFocused, onClick, onClose, onPromote }: RowProps) {
+function TerminalRow({ terminal, isFocused, onClick, onClose: _onClose, onPromote }: RowProps) {
   const status = getAgentStatus(terminal);
   const dotColor = STATUS_COLORS[status];
   const isCoordinator = terminal.tag === "coordinator";
@@ -190,13 +171,7 @@ function TerminalRow({ terminal, isFocused, onClick, onClose, onPromote }: RowPr
             </svg>
           </button>
         )}
-        {!isCoordinator && (
-          <button
-            className="sidebar-terminal-action sidebar-terminal-kill"
-            onClick={onClose}
-            title="Close"
-          >×</button>
-        )}
+        {/* Close button removed — terminals are fixed */}
       </div>
     </div>
   );

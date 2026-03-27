@@ -26,6 +26,7 @@ const DEFAULT_WIDTH = 420;
 const DEFAULT_HEIGHT = 260;
 const COORD_WIDTH = 500;
 const COORD_HEIGHT = 320;
+const FIXED_WORKER_COUNT = 4; // 1 coordinator + 4 workers = 5 total
 
 export default function App() {
   const { send, addHandler } = useSocket("ws://localhost:3001");
@@ -38,6 +39,7 @@ export default function App() {
   const [folders, setFolders] = useState<FolderEntry[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [folderError, setFolderError] = useState<string | null>(null);
+  const [restoredFlag, setRestoredFlag] = useState(0); // triggers re-render after terminal:list
   const [terminals, setTerminals] = useState<TerminalWindowModel[]>([]);
   const [showSettings, setShowSettings] = useState(false);
   const [showChat, setShowChat] = useState(false);
@@ -70,6 +72,7 @@ export default function App() {
   const canvasRef = useRef<TerminalCanvasHandle>(null);
   const restoredFoldersRef = useRef<Set<string>>(new Set());
   const coordinatorHasExistedRef = useRef<Set<string>>(new Set());
+  const workersSpawnedRef = useRef<Set<string>>(new Set());
 
   const [artifactViewer, setArtifactViewer] = useState<{
     terminalId: string; fileName: string; content: string | null;
@@ -110,11 +113,13 @@ export default function App() {
     const centerX = (window.innerWidth - sidebarW) / 2;
     const topY = COORD_HEIGHT / 2 + 20;
     pendingClickRef.current = { x: centerX, y: topY };
+    console.log("[CoAgent] Sending terminal:create for coordinator", pathId);
     send({ type: "terminal:create", pathId, x: centerX, y: topY, provider: coordinatorEngineRef.current as "claude" | "codex", mode: "role", role: "coordinator" });
   }, [send, sidebarCollapsed]);
 
   // Auto-spawn coordinator when a folder becomes active
   useEffect(() => {
+    console.log("[CoAgent] Coordinator effect:", { activeId, hasFlag: activeId ? restoredFoldersRef.current.has(activeId) : false, alreadySpawned: activeId ? coordinatorSpawnedRef.current.has(activeId) : false });
     if (!activeId) return;
     if (coordinatorSpawnedRef.current.has(activeId)) return;
     if (!restoredFoldersRef.current.has(activeId)) return;
@@ -125,9 +130,10 @@ export default function App() {
       coordinatorSpawnedRef.current.add(activeId);
       return;
     }
+    console.log("[CoAgent] Spawning coordinator for", activeId);
     coordinatorSpawnedRef.current.add(activeId);
     spawnCoordinator(activeId);
-  }, [activeId, terminals, spawnCoordinator]);
+  }, [activeId, terminals, restoredFlag, spawnCoordinator]);
 
   useEffect(() => {
     return addHandler((msg: ServerMessage) => {
@@ -143,6 +149,7 @@ export default function App() {
           break;
 
         case "folder:added":
+          console.log("[CoAgent] folder:added", msg.folder);
           setFolders((prev) => [...prev, msg.folder]);
           setActiveId(msg.folder.id);
           setFolderError(null);
@@ -156,6 +163,7 @@ export default function App() {
           coordinatorSpawnedRef.current.delete(msg.pathId);
           coordinatorHasExistedRef.current.delete(msg.pathId);
           restoredFoldersRef.current.delete(msg.pathId);
+          workersSpawnedRef.current.delete(msg.pathId);
           // Remove terminals belonging to this folder
           setTerminals((prev) => prev.filter((t) => t.pathId !== msg.pathId));
           break;
@@ -227,10 +235,13 @@ export default function App() {
           }
 
           restoredFoldersRef.current.add(msg.pathId);
+          console.log("[CoAgent] terminal:list done, restoredFlag triggered for", msg.pathId);
+          setRestoredFlag((n) => n + 1); // trigger coordinator spawn effect
           break;
         }
 
         case "terminal:created": {
+          console.log("[CoAgent] terminal:created", msg.terminalId, msg.sessionType);
           const isCoordinator = msg.sessionType === "coordinator";
 
           let title: string;
@@ -485,6 +496,34 @@ export default function App() {
     }
   }, [terminals, spawnCoordinator]);
 
+  // Auto-spawn fixed workers when coordinator is ready
+  useEffect(() => {
+    if (!activeId) return;
+    if (workersSpawnedRef.current.has(activeId)) return;
+    const hasCoord = terminals.some(
+      (t) => t.pathId === activeId && t.tag === "coordinator" && !t.exited
+    );
+    console.log("[CoAgent] Worker effect:", { activeId, hasCoord, workerCount: terminals.filter(t => t.pathId === activeId && t.tag !== "coordinator").length });
+    if (!hasCoord) return;
+    const existingWorkers = terminals.filter(
+      (t) => t.pathId === activeId && t.tag !== "coordinator"
+    );
+    if (existingWorkers.length >= FIXED_WORKER_COUNT) {
+      workersSpawnedRef.current.add(activeId);
+      return;
+    }
+    workersSpawnedRef.current.add(activeId);
+    const provider = (foldersRef.current.find((f) => f.id === activeId)?.defaultProvider ?? "claude") as "claude" | "codex";
+    const toSpawn = FIXED_WORKER_COUNT - existingWorkers.length;
+    for (let i = 0; i < toSpawn; i++) {
+      const key = `${activeId}:${provider}`;
+      const count = (counterRef.current[key] ?? 0) + 1;
+      counterRef.current[key] = count;
+      const title = `${provider}-${count}`;
+      send({ type: "terminal:create", pathId: activeId, x: 0, y: 0, provider, mode: "role", title });
+    }
+  }, [activeId, terminals, send]);
+
   // Poll cost data
   useEffect(() => {
     if (!activeId) { setCostSummary(null); return; }
@@ -512,17 +551,10 @@ export default function App() {
     }
   }, [showChat, activeId, send]);
 
-  const handleClose = useCallback((id: string) => {
-    const target = terminalsRef.current.find((t) => t.id === id);
-    if (target?.tag === "coordinator") return;
-    if (target && target.mode !== "role" && !target.exited) {
-      if (!window.confirm("This terminal is temporary and won't be restored. Close anyway?")) return;
-    }
-    send({ type: "terminal:close", terminalId: id });
-    setTerminals((prev) => prev.filter((t) => t.id !== id));
-    setFocusOrder((prev) => prev.filter((v) => v !== id));
-    setFocusedTerminalId((prev) => (prev === id ? null : prev));
-  }, [send]);
+  const handleClose = useCallback((_id: string) => {
+    // Terminals are fixed — closing is disabled
+    return;
+  }, []);
 
 
   // Overview grid modal (structured overview only)
@@ -590,18 +622,22 @@ export default function App() {
   }, []);
 
   const handleCloseWorkers = useCallback(() => {
-    const workers = terminalsRef.current.filter((t) => t.pathId === activeId && t.tag !== "coordinator");
-    if (workers.length === 0) return;
-    const workerIds = new Set(workers.map((w) => w.id));
-    for (const w of workers) send({ type: "terminal:close", terminalId: w.id });
-    setTerminals((prev) => prev.filter((t) => !workerIds.has(t.id)));
-    setFocusOrder((prev) => prev.filter((id) => !workerIds.has(id)));
-    setFocusedTerminalId(null);
-    setViewMode("overview");
-  }, [activeId, send]);
+    // Terminals are fixed — closing workers is disabled
+    return;
+  }, []);
 
-  const handleAddFolder = useCallback((path: string) => { send({ type: "folder:add", path }); }, [send]);
-  const handleRemoveFolder = useCallback((pathId: string) => { send({ type: "folder:remove", pathId }); }, [send]);
+  const handleAddFolder = useCallback((path: string) => {
+    if (foldersRef.current.length >= 1) return; // only allow 1 folder
+    send({ type: "folder:add", path });
+  }, [send]);
+  const handleRemoveFolder = useCallback((pathId: string) => {
+    // Close all terminals for this folder before removing
+    const folderTerminals = terminalsRef.current.filter((t) => t.pathId === pathId);
+    for (const t of folderTerminals) {
+      send({ type: "terminal:close", terminalId: t.id });
+    }
+    send({ type: "folder:remove", pathId });
+  }, [send]);
 
   // ── Structured mode callbacks ─────────────────────────
 
@@ -612,28 +648,26 @@ export default function App() {
   }, []);
 
   const handlePickFolder = useCallback(async () => {
+    if (foldersRef.current.length >= 1) return; // only allow 1 folder
+    console.log("[CoAgent] Opening folder picker...");
     try {
       const res = await fetch("http://localhost:3001/pick-folder", { method: "POST" });
       const data = await res.json();
+      console.log("[CoAgent] Picker response:", data);
       if (data.path) {
+        console.log("[CoAgent] Sending folder:add for", data.path);
         send({ type: "folder:add", path: data.path });
+        console.log("[CoAgent] folder:add sent");
       }
-    } catch {
-      // Fallback: prompt for path
-      const path = window.prompt("Enter a project folder path:");
-      if (path) send({ type: "folder:add", path });
+    } catch (err) {
+      console.error("[CoAgent] Picker failed:", err);
     }
   }, [send]);
 
   const handleNewAgent = useCallback(() => {
-    if (!activeId) return;
-    const provider = (activeFolder?.defaultProvider ?? "claude") as "claude" | "codex";
-    const key = `${activeId}:${provider}`;
-    const count = (counterRef.current[key] ?? 0) + 1;
-    counterRef.current[key] = count;
-    const title = `${provider}-${count}`;
-    send({ type: "terminal:create", pathId: activeId, x: 0, y: 0, provider, mode: "role", title });
-  }, [activeId, activeFolder, send]);
+    // Terminals are fixed at 5 — manual creation disabled
+    return;
+  }, []);
 
   const handleRename = useCallback((id: string, name: string) => {
     setTerminals((prev) => prev.map((t) => (t.id === id ? { ...t, title: name } : t)));
@@ -652,10 +686,10 @@ export default function App() {
 
   // ── Canvas mode callbacks ─────────────────────────────
 
-  const handleCanvasClick = useCallback((canvasX: number, canvasY: number, screenX: number, screenY: number) => {
-    if (!activeId) return;
-    setSpawnMenu({ screenX, screenY, canvasX, canvasY });
-  }, [activeId]);
+  const handleCanvasClick = useCallback((_canvasX: number, _canvasY: number, _screenX: number, _screenY: number) => {
+    // Terminals are fixed — spawn menu disabled
+    return;
+  }, []);
 
   const handleSpawnSelect = useCallback((option: SpawnOption) => {
     if (!activeId) return;
@@ -759,7 +793,7 @@ export default function App() {
                 <button className="welcome-pick-btn" onClick={handlePickFolder}>
                   Open folder...
                 </button>
-                <p className="welcome-hint">or drag a folder from Finder into the terminal</p>
+                {/* Single entry point: native folder picker only */}
               </div>
             </div>
           ) : <>
