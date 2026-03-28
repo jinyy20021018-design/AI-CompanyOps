@@ -43,12 +43,11 @@ type Props = {
   onOpenSettings: () => void;
   onOpenChat?: () => void;
   send: (msg: ClientMessage) => void;
-  layoutToggle?: React.ReactNode;
 };
 
 export function TopNav({
   folders, activeFolder, activeId, onSelectFolder, onAddFolder: _onAddFolder, onRemoveFolder, folderError,
-  costSummary, viewMode, onViewModeChange, onOpenSettings, onOpenChat, send, layoutToggle,
+  costSummary, viewMode, onViewModeChange, onOpenSettings, onOpenChat, send,
 }: Props) {
   const [showCostPanel, setShowCostPanel] = useState(false);
   const [showFolderDropdown, setShowFolderDropdown] = useState(false);
@@ -282,7 +281,6 @@ export function TopNav({
             <circle cx="8" cy="8" r="2" stroke="currentColor" strokeWidth="1.2"/>
           </svg>
         </button>
-        {layoutToggle}
       </div>
     </div>
   );

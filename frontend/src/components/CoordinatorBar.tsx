@@ -36,7 +36,7 @@ export function CoordinatorBar({ coordinator, agents, focusedTerminalId, onAgent
             className={`coordinator-bar-dot${coordStatus === "running" ? " pulse" : ""}`}
             style={{ background: coordDotColor }}
           />
-          <span className="coordinator-bar-label">COORDINATOR</span>
+          <span className="coordinator-bar-label">CEO</span>
           {coordinator?.title && (
             <span className="coordinator-bar-name">{coordinator.title}</span>
           )}
