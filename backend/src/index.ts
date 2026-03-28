@@ -512,6 +512,14 @@ wss.on("connection", (ws: WebSocket) => {
       }
 
       case "folder:remove": {
+        // Kill all terminals belonging to this folder
+        for (const [tid, meta] of sessionMeta.entries()) {
+          const folder = registry.resolve(msg.pathId);
+          if (folder && meta.folderPath === folder.path) {
+            ptyManager.kill(tid);
+            sessionMeta.delete(tid);
+          }
+        }
         registry.remove(msg.pathId);
         send(ws, { type: "folder:removed", pathId: msg.pathId });
         break;
@@ -586,7 +594,10 @@ wss.on("connection", (ws: WebSocket) => {
           const provider = msg.provider ?? "claude";
           const mode = msg.mode ?? "quick";
           const role = msg.role;
-          const sessionType = role === "coordinator" ? "coordinator" : (msg.sessionType || provider);
+          const DEPT_IDS = new Set(["product", "engineering", "marketing", "qa", "finance"]);
+          const sessionType = role === "coordinator" ? "coordinator"
+            : (role && DEPT_IDS.has(role)) ? role
+            : (msg.sessionType || provider);
           const persistence = mode === "role" ? "persistent" : "ephemeral";
 
           // Clean up stale coordinator entries before spawning a new one
@@ -657,6 +668,7 @@ wss.on("connection", (ws: WebSocket) => {
               COAGENT_SHARED_DIR: sharedDir,
               COAGENT_SESSION_NAME: sessionName,
               COAGENT_FOLDER_PATH: folder.path,
+              COAGENT_DEPARTMENT: DEPT_IDS.has(sessionType) ? sessionType : (sessionType === "coordinator" ? "ceo" : ""),
               PATH: `${path.join(sharedDir, "bin")}:${process.env.PATH}`,
             }
           );
@@ -761,13 +773,14 @@ wss.on("connection", (ws: WebSocket) => {
       }
 
       case "terminal:close": {
-        // Never kill coordinator terminals via close — they auto-respawn
+        // Never kill stable agents (CEO + departments) via close — they auto-respawn
+        const STABLE_AGENTS = new Set(["coordinator", "product", "engineering", "marketing", "qa", "finance"]);
         const closeMeta = sessionMeta.get(msg.terminalId);
         if (closeMeta) {
           const sessionJsonPath = path.join(closeMeta.sessionDir, "session.json");
           try {
             const sjson = JSON.parse(fs.readFileSync(sessionJsonPath, "utf-8"));
-            if (sjson.type === "coordinator") break;
+            if (STABLE_AGENTS.has(sjson.type)) break;
           } catch {}
         }
         ptyManager.kill(msg.terminalId);
@@ -805,6 +818,14 @@ wss.on("connection", (ws: WebSocket) => {
 
         if (!meta) {
           send(ws, { type: "terminal:error", terminalId: msg.terminalId, message: "Terminal not found" });
+          break;
+        }
+
+        // Safety: skip if session directory no longer exists
+        if (!fs.existsSync(meta.sessionDir)) {
+          console.log("[Backend] Session dir missing, skipping reconnect:", meta.sessionDir);
+          sessionMeta.delete(msg.terminalId);
+          send(ws, { type: "terminal:error", terminalId: msg.terminalId, message: "Session directory missing" });
           break;
         }
 
@@ -887,7 +908,7 @@ wss.on("connection", (ws: WebSocket) => {
             const uuid = entry.claudeSessionId;
             if (uuid) {
               setTimeout(() => {
-                ptyManager.write(msg.terminalId, `claude --model haiku --resume ${uuid}\r`);
+                ptyManager.write(msg.terminalId, `claude --model haiku --dangerously-skip-permissions --resume ${uuid}\r`);
               }, 300);
               // Watch PTY output for "No conversation found" — if resume fails, start fresh
               const termId = msg.terminalId;
@@ -900,7 +921,7 @@ wss.on("connection", (ws: WebSocket) => {
                     disposed = true;
                     disposable.dispose();
                     terminalRegistry.update(meta.folderPath, termId, { claudeSessionId: undefined });
-                    setTimeout(() => { ptyManager.write(termId, "claude --model haiku\r"); }, 200);
+                    setTimeout(() => { ptyManager.write(termId, "claude --model haiku --dangerously-skip-permissions\r"); }, 200);
                   }
                 });
                 // Always clean up after 6s
@@ -908,7 +929,7 @@ wss.on("connection", (ws: WebSocket) => {
               }
             } else {
               // No UUID — start fresh
-              setTimeout(() => { ptyManager.write(msg.terminalId, "claude --model haiku\r"); }, 300);
+              setTimeout(() => { ptyManager.write(msg.terminalId, "claude --model haiku --dangerously-skip-permissions\r"); }, 300);
             }
           }
           break;

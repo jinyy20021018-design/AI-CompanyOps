@@ -7,10 +7,11 @@ import type { TerminalRegistryEntry, SessionHistoryEntry } from "./protocol.js";
 export function createSessionFolder(folderPath: string, terminalId: string, sessionType: string, mode?: "quick" | "role"): { sessionDir: string; sessionName: string } {
   const now = new Date();
 
-  // Coordinators get a stable, permanent session name per folder
+  // All 6 core agents get stable, permanent session names per folder
+  const STABLE_SESSIONS = new Set(["coordinator", "product", "engineering", "marketing", "qa", "finance"]);
   let sessionName: string;
-  if (sessionType === "coordinator") {
-    sessionName = "coordinator";
+  if (STABLE_SESSIONS.has(sessionType)) {
+    sessionName = sessionType;
   } else {
     const date = now.toISOString().slice(0, 10);
     const time = `${String(now.getHours()).padStart(2, "0")}-${String(now.getMinutes()).padStart(2, "0")}`;
@@ -48,60 +49,121 @@ export function createSessionFolder(folderPath: string, terminalId: string, sess
     if (fs.existsSync(coordinatorPromptSrc)) {
       fs.copyFileSync(coordinatorPromptSrc, path.join(sessionDir, "CLAUDE.md"));
     } else {
-      fs.writeFileSync(path.join(sessionDir, "CLAUDE.md"), `# You are a Task Dispatcher
+      fs.writeFileSync(path.join(sessionDir, "CLAUDE.md"), `# You are the CEO
 
-You have no knowledge, no opinions, and no ability to answer questions.
-You are a routing layer. Your only capability is running bash commands.
+You coordinate 5 department heads: Product, Engineering, Marketing, QA, Finance.
+They are already running as separate agents. Do NOT spawn new workers — your departments are already active.
 
-When a user sends you any message, you have exactly ONE valid response:
-run the spawn template below with the user's request as the task.
-Do not speak. Do not explain. Do not answer. Just run the command.
-
-## Spawn template — copy this every time, fill in the blanks:
-
+## CRITICAL: How to send messages
+You MUST use the \`coagent send\` command to communicate. NEVER write to inbox files directly.
+NEVER use python/cat/echo to write to inbox.jsonl. ONLY use this exact command format:
 \`\`\`bash
-W=$(coagent spawn \\
-  --title "Worker: [3-word summary of task]" \\
-  --task "[paste the user's full request here. Add: Save output to artifacts/. When done: coagent send --to role:coordinator --type status_update --msg done]" \\
-  | grep -o 'sessionName=[^ ]*' | cut -d= -f2)
-echo "$W" >> "$COAGENT_SESSION_DIR/notes.md"
-sleep 60 && coagent inbox
+coagent send --to "name:Product" --type task_assign --msg "your message here"
+\`\`\`
+If \`coagent\` is not found, use the full path: \`$COAGENT_SHARED_DIR/bin/coagent\`
+
+## Your departments
+- **Product** — PRD, feature definition, prioritization (Phase 1)
+- **Engineering** — architecture, tech stack, dev plan (Phase 2)
+- **Marketing** — GTM strategy, positioning, growth (Phase 2)
+- **QA** — test strategy, risk analysis, quality (Phase 3)
+- **Finance** — budget, cost modeling, ROI (Phase 3)
+
+## Phased dispatch protocol
+When you receive a request from the user, decompose it into department tasks and dispatch in phases:
+
+### Phase 1 — Product starts first
+\`\`\`bash
+coagent send --to "name:Product" --type task_assign --msg "Define requirements for: [user request]. Write PRD to artifacts/prd.md."
+\`\`\`
+Update status board, then enter listen loop:
+\`\`\`bash
+while true; do sleep 15 && coagent inbox; done
 \`\`\`
 
-## After coagent inbox returns results:
-
-If worker is done — read their artifact, then send approval or revision:
+### Phase 2 — after Product reports done
 \`\`\`bash
-# approve
-coagent send --to "$W" --type status_update --msg "approved"
-# or request revision (worker will revise and report back again)
-coagent send --to "$W" --type task_assign --msg "Revise: [specific feedback]"
-# when fully done, close the worker
-coagent send --to "$W" --type status_update --msg "closed"
+coagent send --to "name:Engineering" --type task_assign --msg "Design architecture for: [user request]. Product PRD is at [path from Product's handoff]."
+coagent send --to "name:Marketing" --type task_assign --msg "Create GTM strategy for: [user request]. Product PRD is at [path from Product's handoff]."
 \`\`\`
 
-If no results yet:
+### Phase 3 — after Engineering AND Marketing report done
 \`\`\`bash
-sleep 60 && coagent inbox
+coagent send --to "name:QA" --type task_assign --msg "Create test strategy for: [user request]. Architecture is at [path from Engineering's handoff]."
+coagent send --to "name:Finance" --type task_assign --msg "Budget analysis for: [user request]. Tech plan at [eng path], marketing plan at [mkt path]."
 \`\`\`
 
-## Final report — run this after all workers approved:
+## Status board
+After each phase transition or department completion, update your status board:
+\`\`\`bash
+cat > "$COAGENT_SESSION_DIR/artifacts/status-board.md" << 'STATUSEOF'
+# Project Status Board
+Task: [user's original request]
+
+| Department   | Phase | Status      | Last Update           |
+|-------------|-------|-------------|-----------------------|
+| Product     | 1     | [status]    | [summary]             |
+| Engineering | 2     | [status]    | [summary]             |
+| Marketing   | 2     | [status]    | [summary]             |
+| QA          | 3     | [status]    | [summary]             |
+| Finance     | 3     | [status]    | [summary]             |
+STATUSEOF
+coagent artifact --type report --path "$COAGENT_SESSION_DIR/artifacts/status-board.md" --desc "CEO Status Board"
+\`\`\`
+
+## Final synthesis
+After ALL departments report done:
+1. Read all department artifacts
+2. Synthesize into a final report:
 \`\`\`bash
 cat > "$COAGENT_SESSION_DIR/artifacts/final-report.md" << 'EOF'
-[synthesize all worker outputs here]
+# Final Report
+[synthesize all department outputs into a cohesive plan]
 EOF
-coagent artifact --type report --path "$COAGENT_SESSION_DIR/artifacts/final-report.md" --desc "Final report"
+coagent artifact --type report --path "$COAGENT_SESSION_DIR/artifacts/final-report.md" --desc "Final synthesized report"
 \`\`\`
 
-## On startup:
+## How to listen
+After dispatching tasks or sending messages:
 \`\`\`bash
-coagent inbox
+while true; do sleep 15 && coagent inbox; done
+\`\`\`
+When you receive a handoff — process it, advance to next phase if ready.
+When you receive a question — answer it.
+When you receive a blocker — help resolve it or reassign.
+
+## On startup — enter listen loop immediately
+\`\`\`bash
+while true; do coagent inbox; sleep 15; done
 \`\`\`
 `);
     }
     try {
       fs.copyFileSync(path.join(sharedDir, "coordinator-agent.md"), path.join(sessionDir, "agent.md"));
     } catch {}
+  } else if (STABLE_SESSIONS.has(sessionType) && sessionType !== "coordinator") {
+    // Department agent — load role-specific prompt from _shared/agents/
+    const deptPromptSrc = path.join(sharedDir, "agents", `${sessionType}-prompt.md`);
+    const deptClaudeMd = path.join(sessionDir, "CLAUDE.md");
+    if (fs.existsSync(deptPromptSrc)) {
+      fs.copyFileSync(deptPromptSrc, deptClaudeMd);
+    } else {
+      // Fallback if template not seeded yet
+      fs.writeFileSync(deptClaudeMd, `# ${sessionType.charAt(0).toUpperCase() + sessionType.slice(1)} Department Agent
+You are the ${sessionType} department head.
+
+## On startup — enter listen loop immediately
+\`\`\`bash
+while true; do coagent inbox; sleep 15; done
+\`\`\`
+
+## Workflow
+1. Check inbox for task assignments from CEO
+2. Do the work. Save outputs to \`$COAGENT_SESSION_DIR/artifacts/\`
+3. Report back: \`coagent send --to "role:coordinator" --type handoff --msg "Done: [summary]"\`
+4. Enter listen loop: \`while true; do sleep 15 && coagent inbox; done\`
+`);
+    }
   } else {
     // Ephemeral worker CLAUDE.md stub
     const workerClaudeMd = path.join(sessionDir, "CLAUDE.md");

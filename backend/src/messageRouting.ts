@@ -64,7 +64,7 @@ export function createScratchpadRouter(
         artifactPath: scratchMsg.artifactPath,
       });
 
-      const urgentTypes = ["blocker", "handoff", "question"];
+      const urgentTypes = ["blocker", "handoff", "question", "task_assign"];
       if (scratchMsg.msgType && urgentTypes.includes(scratchMsg.msgType)) {
         ctx.broadcast({
           type: "message:urgent",
@@ -83,7 +83,7 @@ export function createScratchpadRouter(
           ? scratchMsg.msgType !== "status_update" || scratchMsg.from !== "system"
           : !!(scratchMsg.msgType && workerPushTypes.includes(scratchMsg.msgType));
         if (shouldPush) {
-          if (Date.now() - ctx.ptyManager.getLastOutputTime(tid) > 2000) {
+          if (Date.now() - ctx.ptyManager.getLastOutputTime(tid) > 1000) {
             ctx.ptyManager.write(tid, `You received a [${scratchMsg.msgType}] message from ${scratchMsg.from}: "${scratchMsg.msg.slice(0, 120)}". Run coagent inbox, read it, and act on it.\r`);
           } else {
             if (!ctx.pendingNotifications.has(tid)) ctx.pendingNotifications.set(tid, []);

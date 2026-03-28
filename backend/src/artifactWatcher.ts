@@ -51,6 +51,9 @@ export class ArtifactWatcher {
       }, 200);
     };
 
+    if (!fs.existsSync(sessionDir)) {
+      fs.mkdirSync(sessionDir, { recursive: true });
+    }
     state.watcher = fs.watch(sessionDir, (eventType) => {
       if (eventType === "rename" || eventType === "change") {
         debouncedScan();
