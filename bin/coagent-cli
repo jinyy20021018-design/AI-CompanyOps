@@ -314,16 +314,34 @@ do_wizard() {
   # Verify node-pty native module (critical for terminal spawning)
   if ! node -e "require('$CLI_DIR/backend/node_modules/node-pty')" 2>/dev/null; then
     warn "node-pty native module needs building..."
-    log "Compiling for your architecture (this takes ~15 seconds)..."
+    log "Attempting auto-fix (this may take ~30 seconds)..."
     cd "$CLI_DIR/backend"
-    npx node-gyp rebuild --directory=node_modules/node-pty 2>/dev/null
+
+    # Strategy 1: npm rebuild
+    npm rebuild node-pty 2>/dev/null
     if node -e "require('$CLI_DIR/backend/node_modules/node-pty')" 2>/dev/null; then
-      ok "node-pty compiled successfully"
+      ok "node-pty fixed via npm rebuild"
     else
-      fail "node-pty compilation failed — terminals won't work"
-      echo -e "    ${DIM}Try: cd backend && npm rebuild node-pty${RESET}"
-      echo -e "    ${DIM}Or install Node.js v22 LTS: https://nodejs.org${RESET}"
+      # Strategy 2: clean reinstall of node-pty
+      log "Rebuild failed, trying clean reinstall..."
+      rm -rf node_modules/node-pty
+      npm install node-pty 2>/dev/null
+      if node -e "require('$CLI_DIR/backend/node_modules/node-pty')" 2>/dev/null; then
+        ok "node-pty fixed via clean reinstall"
+      else
+        # Strategy 3: node-gyp rebuild
+        log "Reinstall failed, trying node-gyp..."
+        npx node-gyp rebuild --directory=node_modules/node-pty 2>/dev/null
+        if node -e "require('$CLI_DIR/backend/node_modules/node-pty')" 2>/dev/null; then
+          ok "node-pty fixed via node-gyp rebuild"
+        else
+          fail "node-pty compilation failed — terminals won't work"
+          echo -e "    ${DIM}Your Node.js version: $(node -v)${RESET}"
+          echo -e "    ${DIM}Try installing Node.js v22 LTS: https://nodejs.org${RESET}"
+        fi
+      fi
     fi
+    cd "$CLI_DIR"
   else
     ok "node-pty native module ready"
   fi
