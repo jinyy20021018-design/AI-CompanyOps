@@ -261,17 +261,28 @@ do_wizard() {
   if [[ "$provider_choice" == "2" ]]; then
     coagent_provider="api"
     echo ""
-    echo -e "  ${DIM}Get a key at: ${BOLD}https://console.anthropic.com/settings/keys${RESET}"
+    echo -e "  ${DIM}This will open your browser to sign in to Anthropic Console.${RESET}"
+    echo -e "  ${DIM}Agents will bill against your Console account (pay-per-token).${RESET}"
+    echo ""
+    if ! claude auth login --console; then
+      fail "Console login failed — try again or choose option 1"
+      exit 1
+    fi
+    echo ""
+    ok "Anthropic Console login complete"
+    echo ""
+    echo -e "  ${DIM}One more step: paste your API key for memory services (Honcho Deriver).${RESET}"
+    echo -e "  ${DIM}Get it at: ${BOLD}https://console.anthropic.com/settings/keys${RESET}"
     echo ""
     echo -ne "  ${YELLOW}Paste your Anthropic API key:${RESET} "
     read -r input_api_key
     if [ -z "$input_api_key" ]; then
-      fail "No API key provided — exiting"
-      exit 1
+      warn "No key provided — memory services (Deriver) won't work. Add later via: coagent setup"
+    else
+      anthropic_api_key="$input_api_key"
+      ok "Memory services key saved  ${DIM}${anthropic_api_key:0:12}...${RESET}"
     fi
-    anthropic_api_key="$input_api_key"
-    printf 'COAGENT_PROVIDER=api\nANTHROPIC_API_KEY=%s\n' "$anthropic_api_key" > "$auth_file"
-    ok "API key saved  ${DIM}${anthropic_api_key:0:12}...${RESET}"
+    printf 'COAGENT_PROVIDER=api\nHONCHO_ANTHROPIC_API_KEY=%s\n' "$anthropic_api_key" > "$auth_file"
     has_claude_auth=1
   else
     coagent_provider="subscription"
@@ -401,7 +412,7 @@ do_wizard() {
       fi
     fi
 
-    # Inject Claude token (subscription only — API key mode doesn't use OAuth)
+    # Inject Anthropic token into Honcho .env
     if [ $has_claude_auth -eq 1 ] && [ "$coagent_provider" = "subscription" ]; then
       bash "$HONCHO_DIR/scripts/refresh-oauth-token.sh" 2>/dev/null
     elif [ "$coagent_provider" = "api" ] && [ -n "$anthropic_api_key" ]; then
@@ -459,16 +470,11 @@ do_start_services() {
   local saved_api_key=""
   if [ -f "$auth_file" ]; then
     saved_provider=$(grep "^COAGENT_PROVIDER=" "$auth_file" | cut -d= -f2)
-    saved_api_key=$(grep "^ANTHROPIC_API_KEY=" "$auth_file" | cut -d= -f2-)
+    saved_api_key=$(grep "^HONCHO_ANTHROPIC_API_KEY=" "$auth_file" | cut -d= -f2-)
   fi
 
   if [ "$saved_provider" = "api" ]; then
-    if [ -z "$saved_api_key" ]; then
-      fail "API key not found in $auth_file — run: coagent setup"
-      exit 1
-    fi
-    export ANTHROPIC_API_KEY="$saved_api_key"
-    ok "Auth: Claude API key  ${DIM}${saved_api_key:0:12}...${RESET}"
+    ok "Auth: Anthropic Console  ${DIM}(claude auth login --console)${RESET}"
   else
     # Subscription: refresh OAuth token into Honcho .env
     if [ -f "$HONCHO_DIR/scripts/refresh-oauth-token.sh" ]; then
