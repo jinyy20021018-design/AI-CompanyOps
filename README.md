@@ -63,10 +63,11 @@ All commands can be run as `./bin/coagent-cli <command>` or `coagent <command>` 
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                     Browser (React + Vite)                   │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌────────────┐  │
-│  │ Canvas   │  │ Overview │  │ Focus    │  │ File       │  │
-│  │ Mode     │  │ Grid     │  │ View     │  │ Browser    │  │
-│  └──────────┘  └──────────┘  └──────────┘  └────────────┘  │
+│  ┌──────────────────┐  ┌──────────────┐  ┌──────────────┐  │
+│  │ Overview Grid    │  │ Focus View   │  │ File Browser │  │
+│  │ (coordinator +   │  │ (full-screen │  │ (artifacts)  │  │
+│  │  agent cards)    │  │  terminal)   │  │              │  │
+│  └──────────────────┘  └──────────────┘  └──────────────┘  │
 └──────────────────────┬──────────────────────────────────────┘
                        │ WebSocket
 ┌──────────────────────▼──────────────────────────────────────┐
@@ -98,7 +99,6 @@ All commands can be run as `./bin/coagent-cli <command>` or `coagent <command>` 
 ## Project Structure
 
 ```
-cli2/
 ├── bin/
 │   └── coagent-cli              # CLI — starts/stops all services
 ├── backend/
@@ -116,23 +116,32 @@ cli2/
 │       ├── serverContext.ts     # Shared type for all modules
 │       ├── protocol.ts          # WebSocket message types
 │       ├── usageLogger.ts       # Cost tracking per session
-│       └── __tests__/           # 31 backend tests
+│       └── __tests__/           # 5 test files (31+ backend tests)
 ├── frontend/
 │   └── src/
-│       ├── App.tsx              # Main app with dual layout modes
+│       ├── App.tsx              # Main app — overview / focus / files view modes
 │       ├── components/
+│       │   ├── OverviewGrid.tsx     # Coordinator + agent card grid layout
+│       │   ├── FocusView.tsx        # Full-screen single-agent terminal view
 │       │   ├── TerminalCanvas.tsx   # Infinite pan/zoom canvas
 │       │   ├── TerminalWindow.tsx   # Draggable terminal window
 │       │   ├── TerminalPane.tsx     # xterm.js terminal emulator
 │       │   ├── AgentCard.tsx        # Structured mode agent card
+│       │   ├── AgentChip.tsx        # Compact agent status chip
+│       │   ├── ArtifactViewer.tsx   # Artifact preview panel
 │       │   ├── FileBrowser.tsx      # Global artifact browser + preview
 │       │   ├── CoordinatorBar.tsx   # Coordinator status strip
 │       │   ├── ChatPanel.tsx        # Inter-agent messaging UI
-│       │   ├── TopNav.tsx           # Navigation + folder selector
-│       │   └── ...
+│       │   ├── MessageBar.tsx       # Message input bar
+│       │   ├── MessageTimeline.tsx  # Scratchpad message feed
+│       │   ├── SpawnMenu.tsx        # Agent spawn menu
+│       │   ├── SettingsPanel.tsx    # Theme and settings panel
+│       │   ├── WorkspaceHeader.tsx  # Workspace title and controls
+│       │   ├── ProjectSidebar.tsx   # Project folder selector sidebar
+│       │   └── TopNav.tsx           # Navigation + view mode switcher
 │       ├── hooks/useSocket.ts   # WebSocket with auto-reconnect
 │       ├── utils/agentStatus.ts # Agent state detection
-│       └── __tests__/           # 19 frontend tests
+│       └── __tests__/           # 20 frontend tests
 ├── .env.example                 # Environment template for new users
 ├── CHANGELOG.md                 # Release history
 ├── VERSION                      # Current version (0.3.0)
