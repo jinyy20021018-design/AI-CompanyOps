@@ -19,8 +19,8 @@
 前置要求：[Node.js](https://nodejs.org/)（v20–v24）、[Docker Desktop](https://www.docker.com/products/docker-desktop/)（已启动）、[Claude Code](https://claude.ai/code)（已登录）
 
 ```bash
-git clone https://github.com/ZihaoChenz/CoAgents.git
-cd CoAgents
+git clone https://github.com/jinyy20021018-design/AI-CompanyOps.git
+cd AI-CompanyOps
 ./bin/coagent-cli
 ```
 
