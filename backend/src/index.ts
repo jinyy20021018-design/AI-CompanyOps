@@ -663,6 +663,9 @@ wss.on("connection", (ws: WebSocket) => {
                 sessionMeta.delete(terminalId);
               }
               send(ws, { type: "terminal:exit", terminalId, exitCode });
+              if (sessionType === "coordinator" && exitCode === 0) {
+                broadcast({ type: "coordinator:complete", terminalId, sessionName, folderPath: folder.path });
+              }
             },
             {
               COAGENT_SHARED_DIR: sharedDir,
