@@ -121,7 +121,8 @@ export type ServerMessage =
   | { type: "artifact:update"; terminalId: string; files: ArtifactFileInfo[] }
   | { type: "artifact:content"; terminalId: string; fileName: string; content: string }
   | { type: "scratchpad:history"; pathId: string; entries: ScratchpadEntry[] }
-  | { type: "scratchpad:message"; pathId: string; entry: ScratchpadEntry };
+  | { type: "scratchpad:message"; pathId: string; entry: ScratchpadEntry }
+  | { type: "coordinator:complete"; terminalId: string; sessionName: string; folderPath: string };
 
 export type ScratchpadEntry = {
   ts: string;
