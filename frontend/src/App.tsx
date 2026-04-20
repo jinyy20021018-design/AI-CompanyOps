@@ -9,6 +9,7 @@ import { ChatPanel } from "./components/ChatPanel";
 import { FileBrowser } from "./components/FileBrowser";
 import { MessageTimeline } from "./components/MessageTimeline";
 import type { FolderEntry, TerminalWindowModel, ServerMessage, CostSummary, ScratchpadEntry } from "./types";
+import { PresentationPage } from "./components/PresentationPage";
 
 const COORD_WIDTH = 500;
 const COORD_HEIGHT = 320;
@@ -58,6 +59,10 @@ export default function App() {
   const [artifactViewer, setArtifactViewer] = useState<{
     terminalId: string; fileName: string; content: string | null;
   } | null>(null); // used only for structured overview modal
+
+  const [presentation, setPresentation] = useState<{
+    terminalId: string; sessionName: string;
+  } | null>(null);
 
   useEffect(() => { foldersRef.current = folders; }, [folders]);
   useEffect(() => { terminalsRef.current = terminals; }, [terminals]);
@@ -312,6 +317,10 @@ export default function App() {
           setTerminals((prev) =>
             prev.map((t) => t.id === msg.terminalId ? { ...t, active: false, exited: true, exitCode: msg.exitCode, waitingForHuman: false } : t)
           );
+          break;
+
+        case "coordinator:complete":
+          setPresentation({ terminalId: msg.terminalId, sessionName: msg.sessionName });
           break;
 
         case "terminal:promoted":
@@ -677,6 +686,15 @@ export default function App() {
             </div>
           </div>
         </div>
+      )}
+      {presentation && (
+        <PresentationPage
+          terminalId={presentation.terminalId}
+          sessionName={presentation.sessionName}
+          onClose={() => setPresentation(null)}
+          send={send}
+          addHandler={addHandler}
+        />
       )}
       {showSettings && (
         <SettingsPanel canvasTheme={canvasTheme} onCanvasThemeChange={setCanvasTheme} onCloseWorkers={handleCloseWorkers} workerCount={agents.length} onClose={() => setShowSettings(false)} />

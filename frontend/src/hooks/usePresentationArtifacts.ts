@@ -1,11 +1,11 @@
 import { useState, useEffect, useCallback } from "react";
-import type { ArtifactFileInfo, ServerMessage } from "../types";
+import type { ArtifactFileInfo, ServerMessage, ClientMessage } from "../types";
 
 export type ArtifactContents = Record<string, string>;
 
 export function usePresentationArtifacts(
   terminalId: string | null,
-  send: (msg: object) => void,
+  send: (msg: ClientMessage) => void,
   addHandler: (handler: (msg: ServerMessage) => void) => () => void
 ): { files: ArtifactFileInfo[]; contents: ArtifactContents; loading: boolean } {
   const [files, setFiles] = useState<ArtifactFileInfo[]>([]);

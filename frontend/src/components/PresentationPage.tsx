@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
 import { usePresentationArtifacts } from "../hooks/usePresentationArtifacts";
-import type { ServerMessage } from "../types";
+import type { ServerMessage, ClientMessage } from "../types";
 
 const TAB_ORDER = ["final-report.md", "prd.md", "architecture.md", "gtm.md", "qa-review.md", "financial-model.md", "status-board.md"];
 const TAB_LABELS: Record<string, string> = {
@@ -27,7 +27,7 @@ interface Props {
   terminalId: string;
   sessionName: string;
   onClose: () => void;
-  send: (msg: object) => void;
+  send: (msg: ClientMessage) => void;
   addHandler: (handler: (msg: ServerMessage) => void) => () => void;
 }
 
