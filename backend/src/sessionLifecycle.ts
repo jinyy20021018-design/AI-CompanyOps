@@ -149,7 +149,7 @@ while true; do coagent inbox; sleep 15; done
       fs.copyFileSync(deptPromptSrc, deptClaudeMd);
     } else {
       // Fallback if template not seeded yet
-      fs.writeFileSync(deptClaudeMd, `# ${sessionType.charAt(0).toUpperCase() + sessionType.slice(1)} Department Agent
+      let prompt = `# ${sessionType.charAt(0).toUpperCase() + sessionType.slice(1)} Department Agent
 You are the ${sessionType} department head.
 
 ## On startup — enter listen loop immediately
@@ -162,7 +162,35 @@ while true; do coagent inbox; sleep 15; done
 2. Do the work. Save outputs to \`$COAGENT_SESSION_DIR/artifacts/\`
 3. Report back: \`coagent send --to "role:coordinator" --type handoff --msg "Done: [summary]"\`
 4. Enter listen loop: \`while true; do sleep 15 && coagent inbox; done\`
-`);
+`;
+      if (sessionType === "engineering") {
+        prompt += `
+## App UI Preview (required)
+After writing your architecture document, also create a self-contained HTML mockup of the app's main screen:
+\`\`\`bash
+cat > "$COAGENT_SESSION_DIR/artifacts/app-preview.html" << 'HTMLEOF'
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>App Preview</title>
+<style>
+  /* Write realistic app UI styles inline here */
+  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f9fafb; }
+</style>
+</head>
+<body>
+  <!-- Write the app's main screen UI here, showing key features -->
+</body>
+</html>
+HTMLEOF
+coagent artifact --type preview --path "$COAGENT_SESSION_DIR/artifacts/app-preview.html" --desc "App UI Preview"
+\`\`\`
+Make the mockup realistic — use the actual app name and feature set from the PRD. Style it properly with inline CSS. Show at least the main dashboard or home screen.
+`;
+      }
+      fs.writeFileSync(deptClaudeMd, prompt);
     }
   } else {
     // Ephemeral worker CLAUDE.md stub
