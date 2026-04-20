@@ -525,6 +525,7 @@ export default function App() {
   const handleSelectFolder = useCallback((id: string) => {
     setActiveId(id);
     setArtifactViewer(null);
+    setPresentation(null);
     setFocusedTerminalId(null);
     setViewMode("overview");
   }, []);
