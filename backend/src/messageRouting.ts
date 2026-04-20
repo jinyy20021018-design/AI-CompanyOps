@@ -4,6 +4,7 @@ import type { ScratchpadMessage } from "./scratchpadWatcher.js";
 import type { ScratchpadEntry } from "./protocol.js";
 import type { ServerContext } from "./serverContext.js";
 import { getHoncho, getAgentPeerId, getProjectSessionId, isHonchoAvailable } from "./honchoClient.js";
+import { validateMessage, sanitizeForPty } from "./guardrail.js";
 
 /**
  * Create a reusable scratchpad message routing callback.
@@ -18,6 +19,18 @@ export function createScratchpadRouter(
   folder: { path: string; id: string },
 ): (scratchMsg: ScratchpadMessage) => void {
   return (scratchMsg: ScratchpadMessage) => {
+    // ── Guardrail check ──────────────────────────────────────────────────────
+    const guardrail = validateMessage(scratchMsg);
+    if (guardrail.flags.length > 0) {
+      console.warn("[guardrail] flags on message from", scratchMsg.from, ":", guardrail.flags.map(f => `${f.type}:${f.detail}`).join(", "));
+    }
+    if (!guardrail.allowed) {
+      console.warn("[guardrail] BLOCKED message from", scratchMsg.from, "— prompt injection detected");
+      return;
+    }
+    // Use sanitized copy (PII redacted, control chars stripped) for all downstream operations
+    scratchMsg = guardrail.sanitized;
+
     // Route using registry as source of truth — covers ALL workers,
     // including ephemeral ones not currently in sessionMeta.
     const folderEntries = ctx.terminalRegistry.load(folder.path);
@@ -84,7 +97,7 @@ export function createScratchpadRouter(
           : !!(scratchMsg.msgType && workerPushTypes.includes(scratchMsg.msgType));
         if (shouldPush) {
           if (Date.now() - ctx.ptyManager.getLastOutputTime(tid) > 1000) {
-            ctx.ptyManager.write(tid, `You received a [${scratchMsg.msgType}] message from ${scratchMsg.from}: "${scratchMsg.msg.slice(0, 120)}". Run coagent inbox, read it, and act on it.\r`);
+            ctx.ptyManager.write(tid, `You received a [${scratchMsg.msgType}] message from ${sanitizeForPty(scratchMsg.from, 40)}: "${sanitizeForPty(scratchMsg.msg)}". Run coagent inbox, read it, and act on it.\r`);
           } else {
             if (!ctx.pendingNotifications.has(tid)) ctx.pendingNotifications.set(tid, []);
             ctx.pendingNotifications.get(tid)!.push(scratchMsg);
