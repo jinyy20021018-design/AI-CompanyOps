@@ -83,8 +83,10 @@ export function createScratchpadRouter(
           ? scratchMsg.msgType !== "status_update" || scratchMsg.from !== "system"
           : !!(scratchMsg.msgType && workerPushTypes.includes(scratchMsg.msgType));
         if (shouldPush) {
-          if (Date.now() - ctx.ptyManager.getLastOutputTime(tid) > 1000) {
-            ctx.ptyManager.write(tid, `You received a [${scratchMsg.msgType}] message from ${scratchMsg.from}: "${scratchMsg.msg.slice(0, 120)}". Run coagent inbox, read it, and act on it.\r`);
+          if (Date.now() - ctx.ptyManager.getLastOutputTime(tid) > 3000) {
+            const notifText = `You received a [${scratchMsg.msgType}] message from ${scratchMsg.from}: "${scratchMsg.msg.slice(0, 120)}". Run coagent inbox, read it, and act on it.`;
+            ctx.ptyManager.write(tid, notifText);
+            setTimeout(() => ctx.ptyManager.write(tid, "\r"), 150);
           } else {
             if (!ctx.pendingNotifications.has(tid)) ctx.pendingNotifications.set(tid, []);
             ctx.pendingNotifications.get(tid)!.push(scratchMsg);

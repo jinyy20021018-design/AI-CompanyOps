@@ -1301,8 +1301,9 @@ const notificationFlushTimer = setInterval(() => {
     const lastOutput = ptyManager.getLastOutputTime(tid);
     if (Date.now() - lastOutput > 3000) {
       const summary = msgs.map(m => `[${m.msgType}] from ${m.from}: ${m.msg.slice(0, 80)}`).join("; ");
-      const prompt = `You have ${msgs.length} new message(s): ${summary}. Run coagent inbox, read them, and act on each.\r`;
+      const prompt = `You have ${msgs.length} new message(s): ${summary}. Run coagent inbox, read them, and act on each.`;
       ptyManager.write(tid, prompt);
+      setTimeout(() => ptyManager.write(tid, "\r"), 150);
       pendingNotifications.delete(tid);
     }
   }
