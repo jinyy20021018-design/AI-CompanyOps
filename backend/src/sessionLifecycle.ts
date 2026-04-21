@@ -78,7 +78,7 @@ coagent send --to "name:Product" --type task_assign --msg "Define requirements f
 \`\`\`
 Update status board, then enter listen loop:
 \`\`\`bash
-while true; do sleep 15 && coagent inbox; done
+while true; do coagent inbox; sleep 5; done
 \`\`\`
 
 ### Phase 2 — after Product reports done
@@ -126,7 +126,7 @@ coagent artifact --type report --path "$COAGENT_SESSION_DIR/artifacts/final-repo
 ## How to listen
 After dispatching tasks or sending messages:
 \`\`\`bash
-while true; do sleep 15 && coagent inbox; done
+while true; do coagent inbox; sleep 5; done
 \`\`\`
 When you receive a handoff — process it, advance to next phase if ready.
 When you receive a question — answer it.
@@ -161,7 +161,7 @@ while true; do coagent inbox; sleep 15; done
 1. Check inbox for task assignments from CEO
 2. Do the work. Save outputs to \`$COAGENT_SESSION_DIR/artifacts/\`
 3. Report back: \`coagent send --to "role:coordinator" --type handoff --msg "Done: [summary]"\`
-4. Enter listen loop: \`while true; do sleep 15 && coagent inbox; done\`
+4. Enter listen loop: \`while true; do coagent inbox; sleep 5; done\`
 `;
       if (sessionType === "engineering") {
         prompt += `

@@ -83,10 +83,22 @@ export function createScratchpadRouter(
           ? scratchMsg.msgType !== "status_update" || scratchMsg.from !== "system"
           : !!(scratchMsg.msgType && workerPushTypes.includes(scratchMsg.msgType));
         if (shouldPush) {
-          if (Date.now() - ctx.ptyManager.getLastOutputTime(tid) > 3000) {
-            const notifText = `You received a [${scratchMsg.msgType}] message from ${scratchMsg.from}: "${scratchMsg.msg.slice(0, 120)}". Run coagent inbox, read it, and act on it.`;
-            ctx.ptyManager.write(tid, notifText);
-            setTimeout(() => ctx.ptyManager.write(tid, "\r"), 150);
+          const urgentInterrupt = ["question", "blocker", "handoff"].includes(scratchMsg.msgType ?? "");
+          const idle = Date.now() - ctx.ptyManager.getLastOutputTime(tid) > 3000;
+          if (idle || urgentInterrupt) {
+            if (urgentInterrupt && !idle) {
+              // Break out of any running sleep/loop so Claude can react immediately
+              ctx.ptyManager.write(tid, "\x03");
+              setTimeout(() => {
+                const notifText = `You received a [${scratchMsg.msgType}] message from ${scratchMsg.from}: "${scratchMsg.msg.slice(0, 120)}". Run coagent inbox, read it, and act on it.`;
+                ctx.ptyManager.write(tid, notifText);
+                setTimeout(() => ctx.ptyManager.write(tid, "\r"), 150);
+              }, 300);
+            } else {
+              const notifText = `You received a [${scratchMsg.msgType}] message from ${scratchMsg.from}: "${scratchMsg.msg.slice(0, 120)}". Run coagent inbox, read it, and act on it.`;
+              ctx.ptyManager.write(tid, notifText);
+              setTimeout(() => ctx.ptyManager.write(tid, "\r"), 150);
+            }
           } else {
             if (!ctx.pendingNotifications.has(tid)) ctx.pendingNotifications.set(tid, []);
             ctx.pendingNotifications.get(tid)!.push(scratchMsg);
