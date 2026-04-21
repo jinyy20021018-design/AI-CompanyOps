@@ -814,7 +814,7 @@ coagent send --to "name:Product" --type task_assign --msg "Define requirements f
 \\\`\\\`\\\`
 Update status board, then enter listen loop:
 \\\`\\\`\\\`bash
-while true; do sleep 15 && coagent inbox; done
+while true; do coagent inbox; sleep 3; done
 \\\`\\\`\\\`
 
 ### Phase 2 — after Product reports done
@@ -859,10 +859,17 @@ EOF
 coagent artifact --type report --path "$COAGENT_SESSION_DIR/artifacts/final-report.md" --desc "Final synthesized report"
 \\\`\\\`\\\`
 
+## Phase 4 — Build the app (always, after final report)
+After writing final-report.md, IMMEDIATELY dispatch Engineering to build the actual HTML app:
+\\\`\\\`\\\`bash
+coagent send --to "name:Engineering" --type task_assign --msg "Build the actual working HTML app based on the final plan. Create a self-contained single-file HTML app at $COAGENT_SESSION_DIR/artifacts/app.html using CDN React (unpkg.com/react@18), Babel standalone for JSX, inline CSS. Make it fully functional. Then register: coagent artifact --type preview --path $COAGENT_SESSION_DIR/artifacts/app.html --desc Live App"
+\\\`\\\`\\\`
+Wait for Engineering handoff confirming app.html is built, then enter listen loop.
+
 ## How to listen
 After dispatching tasks or sending messages:
 \\\`\\\`\\\`bash
-while true; do sleep 15 && coagent inbox; done
+while true; do coagent inbox; sleep 3; done
 \\\`\\\`\\\`
 When you receive a handoff — process it, advance to next phase if ready.
 When you receive a question — answer it.
@@ -973,10 +980,16 @@ Any LLM-backed action must emit a structured usage event with provider, model, t
 
 function seedDepartmentPrompts(agentsDir: string): void {
   const commRules = `
+## SYSTEM: No extended thinking
+Do NOT use extended thinking or long reasoning. Act immediately — write the file, run the commands, report back. Speed matters more than perfection.
+
+## CRITICAL: Never ask questions — make assumptions and proceed
+Do NOT ask clarifying questions to anyone. Make reasonable assumptions, state them briefly in your artifact, and proceed immediately. Questions block the whole pipeline.
+
 ## CRITICAL COMMUNICATION RULES — YOU MUST FOLLOW THESE
 1. **EVERY time you finish creating an artifact**, you MUST immediately run the coagent send commands below. No exceptions.
 2. **EVERY time another agent asks you a question**, answer it immediately with coagent send.
-3. **If you need information from another department**, ask immediately — don't guess.
+3. **If you need information from another department**, assume reasonable defaults and proceed — do NOT ask.
 4. After all sends, enter the listen loop. NEVER just stop — always keep listening.
 5. The coagent binary is at: $COAGENT_SHARED_DIR/bin/coagent (use full path if \`coagent\` alone fails)
 `;
@@ -1028,6 +1041,21 @@ You think like a principal engineer. You evaluate trade-offs explicitly, think i
 ${commRules}
 
 ## Your job when you receive a task_assign
+If the task says "Build the actual working HTML app" or mentions "app.html":
+1. Write a single self-contained HTML file to \`$COAGENT_SESSION_DIR/artifacts/app.html\`
+   - Use React 18 + ReactDOM via CDN (unpkg.com/react@18 and unpkg.com/react-dom@18)
+   - Use Babel standalone for JSX (unpkg.com/@babel/standalone/babel.min.js)
+   - Write your React component in a script tag with type="text/babel"
+   - Use fetch() for any API calls
+   - Inline all CSS in a style tag — clean, modern styling
+   - The app must work by just opening the HTML file — no build step, no npm
+2. Run:
+\`\`\`bash
+coagent artifact --type preview --path "$COAGENT_SESSION_DIR/artifacts/app.html" --desc "Live App Preview"
+coagent send --to "role:coordinator" --type handoff --msg "Done: app.html built at $COAGENT_SESSION_DIR/artifacts/app.html"
+\`\`\`
+
+Otherwise (architecture task):
 1. Read the Product PRD first (path will be in the task or in your inbox from Product's handoff)
 2. Write architecture to \`$COAGENT_SESSION_DIR/artifacts/tech-plan.md\`
 3. **IMMEDIATELY after saving the file**, run ALL of these commands:

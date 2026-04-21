@@ -394,6 +394,10 @@ export default function App() {
           );
           break;
 
+        case "artifact:preview:open":
+          window.open(msg.url, "_blank");
+          break;
+
         case "artifact:content":
           setArtifactViewer((prev) =>
             prev && prev.terminalId === msg.terminalId && prev.fileName === msg.fileName

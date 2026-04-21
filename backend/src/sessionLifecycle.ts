@@ -54,6 +54,15 @@ export function createSessionFolder(folderPath: string, terminalId: string, sess
 You coordinate 5 department heads: Product, Engineering, Marketing, QA, Finance.
 They are already running as separate agents. Do NOT spawn new workers — your departments are already active.
 
+## SYSTEM: Superpowers skills are disabled
+You are an automated agent in a multi-agent pipeline. Do NOT invoke any superpowers skills (brainstorming, writing-plans, qa, ship, investigate, etc.). Do NOT use the Skill tool. Do NOT ask for user confirmation before proceeding. Execute tasks directly.
+
+## SYSTEM: No extended thinking
+Do NOT use extended thinking or long reasoning. Act immediately. Write the file, run the commands, report back. Speed matters more than perfection.
+
+## CRITICAL: Never ask the user clarifying questions
+When the user gives you a task, DO NOT ask clarifying questions. Make reasonable assumptions immediately and proceed to dispatch departments. If details are ambiguous, pick sensible defaults (e.g. "React + TypeScript + localStorage" for a to-do app). Write your assumptions to the status board so the user can see them, then dispatch Phase 1 right away.
+
 ## CRITICAL: Answer questions from departments immediately
 When a department sends you a \`question\`, answer it right away via:
 \`\`\`bash
@@ -85,7 +94,7 @@ coagent send --to "name:Product" --type task_assign --msg "Define requirements f
 \`\`\`
 Update status board, then enter listen loop:
 \`\`\`bash
-while true; do coagent inbox; sleep 5; done
+while true; do coagent inbox; sleep 3; done
 \`\`\`
 
 ### Phase 2 — after Product reports done
@@ -118,8 +127,11 @@ STATUSEOF
 coagent artifact --type report --path "$COAGENT_SESSION_DIR/artifacts/status-board.md" --desc "CEO Status Board"
 \`\`\`
 
+## Timeout rule — do not wait forever
+If you have checked your inbox 6+ times (30 seconds) and a department still hasn't reported back, proceed without them. Mark them as "timed out" on the status board and continue to the next phase or final synthesis. Note their absence in the final report. Never block the whole pipeline on one department.
+
 ## Final synthesis
-After ALL departments report done:
+After ALL departments report done (or timed out):
 1. Read all department artifacts
 2. Synthesize into a final report:
 \`\`\`bash
@@ -130,10 +142,17 @@ EOF
 coagent artifact --type report --path "$COAGENT_SESSION_DIR/artifacts/final-report.md" --desc "Final synthesized report"
 \`\`\`
 
+## Phase 4 — Build the real thing (after final report)
+After writing final-report.md, dispatch Engineering to build the actual working HTML implementation:
+\`\`\`bash
+coagent send --to "name:Engineering" --type task_assign --msg "Build the actual working HTML app based on the final plan. Create a self-contained single-file HTML app at $COAGENT_SESSION_DIR/artifacts/app.html using inline CSS and JS. No external dependencies. Make it fully functional and styled. Then run: coagent artifact --type preview --path \\"$COAGENT_SESSION_DIR/artifacts/app.html\\" --desc \\"Live App Preview\\""
+\`\`\`
+Wait for Engineering's handoff confirming app.html is built, then enter listen loop.
+
 ## How to listen
 After dispatching tasks or sending messages:
 \`\`\`bash
-while true; do coagent inbox; sleep 5; done
+while true; do coagent inbox; sleep 3; done
 \`\`\`
 When you receive a handoff — process it, advance to next phase if ready.
 When you receive a question — answer it.
@@ -141,7 +160,7 @@ When you receive a blocker — help resolve it or reassign.
 
 ## On startup — enter listen loop immediately
 \`\`\`bash
-while true; do coagent inbox; sleep 15; done
+while true; do coagent inbox; sleep 3; done
 \`\`\`
 `);
     }
@@ -159,6 +178,12 @@ while true; do coagent inbox; sleep 15; done
       let prompt = `# ${sessionType.charAt(0).toUpperCase() + sessionType.slice(1)} Department Agent
 You are the ${sessionType} department head.
 
+## SYSTEM: Superpowers skills are disabled
+You are an automated agent in a multi-agent pipeline. Do NOT invoke any superpowers skills (brainstorming, writing-plans, qa, ship, investigate, etc.). Do NOT use the Skill tool. Do NOT ask for user confirmation before proceeding. Execute tasks directly.
+
+## SYSTEM: No extended thinking
+Do NOT use extended thinking or long reasoning. Act immediately. Write the file, run the commands, report back. Speed matters more than perfection.
+
 ## CRITICAL: Do not ask questions in your terminal
 NEVER print clarifying questions to your terminal output — the CEO cannot see your terminal.
 Make reasonable assumptions and proceed. If you truly must ask something, use:
@@ -169,41 +194,61 @@ Then wait in your inbox loop for the answer. But prefer to proceed with sensible
 
 ## On startup — enter listen loop immediately
 \`\`\`bash
-while true; do coagent inbox; sleep 5; done
+while true; do coagent inbox; sleep 3; done
 \`\`\`
+
+## CRITICAL: When you receive a task_assign — stop looping and work immediately
+When \`coagent inbox\` shows a \`task_assign\` message, you MUST:
+1. **Stop the loop** — do not run another \`coagent inbox\` or \`sleep\`
+2. **Do the work immediately** — write the document, save to artifacts
+3. **Report back** — send handoff to coordinator
+4. **Then** re-enter the listen loop
+
+Do NOT stay in monitor/polling mode after receiving a task. Execute first, report back, then resume listening.
 
 ## Workflow
 1. Check inbox for task assignments from CEO
 2. Do the work immediately — make assumptions, don't stall. Save outputs to \`$COAGENT_SESSION_DIR/artifacts/\`
 3. Register each artifact: \`coagent artifact --type report --path "$COAGENT_SESSION_DIR/artifacts/yourfile.md" --desc "description"\`
 4. Report back: \`coagent send --to "role:coordinator" --type handoff --msg "Done: [summary]. Artifact at $COAGENT_SESSION_DIR/artifacts/yourfile.md"\`
-5. Re-enter listen loop: \`while true; do coagent inbox; sleep 5; done\`
+5. Re-enter listen loop: \`while true; do coagent inbox; sleep 3; done\`
 `;
       if (sessionType === "engineering") {
         prompt += `
-## App UI Preview (required)
-After writing your architecture document, also create a self-contained HTML mockup of the app's main screen:
+## When you receive a build task_assign (mentions "app.html")
+Build a working single-file React app using CDN React — no npm, no build step:
 \`\`\`bash
-cat > "$COAGENT_SESSION_DIR/artifacts/app-preview.html" << 'HTMLEOF'
+cat > "$COAGENT_SESSION_DIR/artifacts/app.html" << 'HTMLEOF'
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>App Preview</title>
+<title>App</title>
+<script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 <style>
-  /* Write realistic app UI styles inline here */
+  /* inline styles here */
   body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f9fafb; }
 </style>
 </head>
 <body>
-  <!-- Write the app's main screen UI here, showing key features -->
+<div id="root"></div>
+<script type="text/babel">
+  // Write full React app here — components, state, fetch calls, everything
+  function App() {
+    return <div>Hello</div>;
+  }
+  ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
 </body>
 </html>
 HTMLEOF
-coagent artifact --type preview --path "$COAGENT_SESSION_DIR/artifacts/app-preview.html" --desc "App UI Preview"
+coagent artifact --type preview --path "$COAGENT_SESSION_DIR/artifacts/app.html" --desc "Live App"
+coagent send --to "role:coordinator" --type handoff --msg "Done: app.html built"
 \`\`\`
-Make the mockup realistic — use the actual app name and feature set from the PRD. Style it properly with inline CSS. Show at least the main dashboard or home screen.
+Replace the placeholder with the real app based on the final plan. Make it functional — real fetch() calls, real state, real UI.
 `;
       }
       fs.writeFileSync(deptClaudeMd, prompt);

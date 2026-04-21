@@ -83,7 +83,11 @@ export function createScratchpadRouter(
           ? scratchMsg.msgType !== "status_update" || scratchMsg.from !== "system"
           : !!(scratchMsg.msgType && workerPushTypes.includes(scratchMsg.msgType));
         if (shouldPush) {
-          const urgentInterrupt = ["question", "blocker", "handoff"].includes(scratchMsg.msgType ?? "");
+          // For coordinator: every incoming message is urgent (they must react to everything)
+          // For workers: only task_assign/question/blocker/handoff interrupt
+          const urgentInterrupt = isCoordinator
+            ? true
+            : ["question", "blocker", "handoff", "task_assign"].includes(scratchMsg.msgType ?? "");
           const idle = Date.now() - ctx.ptyManager.getLastOutputTime(tid) > 3000;
           if (idle || urgentInterrupt) {
             if (urgentInterrupt && !idle) {
