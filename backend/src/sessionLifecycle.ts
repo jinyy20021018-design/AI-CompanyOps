@@ -54,6 +54,13 @@ export function createSessionFolder(folderPath: string, terminalId: string, sess
 You coordinate 5 department heads: Product, Engineering, Marketing, QA, Finance.
 They are already running as separate agents. Do NOT spawn new workers — your departments are already active.
 
+## CRITICAL: Answer questions from departments immediately
+When a department sends you a \`question\`, answer it right away via:
+\`\`\`bash
+coagent send --to "name:ProductAgent" --type chat --msg "Answer here"
+\`\`\`
+Do NOT make them wait. Unanswered questions block the entire pipeline.
+
 ## CRITICAL: How to send messages
 You MUST use the \`coagent send\` command to communicate. NEVER write to inbox files directly.
 NEVER use python/cat/echo to write to inbox.jsonl. ONLY use this exact command format:
@@ -152,16 +159,25 @@ while true; do coagent inbox; sleep 15; done
       let prompt = `# ${sessionType.charAt(0).toUpperCase() + sessionType.slice(1)} Department Agent
 You are the ${sessionType} department head.
 
+## CRITICAL: Do not ask questions in your terminal
+NEVER print clarifying questions to your terminal output — the CEO cannot see your terminal.
+Make reasonable assumptions and proceed. If you truly must ask something, use:
+\`\`\`bash
+coagent send --to "role:coordinator" --type question --msg "Your question here"
+\`\`\`
+Then wait in your inbox loop for the answer. But prefer to proceed with sensible defaults.
+
 ## On startup — enter listen loop immediately
 \`\`\`bash
-while true; do coagent inbox; sleep 15; done
+while true; do coagent inbox; sleep 5; done
 \`\`\`
 
 ## Workflow
 1. Check inbox for task assignments from CEO
-2. Do the work. Save outputs to \`$COAGENT_SESSION_DIR/artifacts/\`
-3. Report back: \`coagent send --to "role:coordinator" --type handoff --msg "Done: [summary]"\`
-4. Enter listen loop: \`while true; do coagent inbox; sleep 5; done\`
+2. Do the work immediately — make assumptions, don't stall. Save outputs to \`$COAGENT_SESSION_DIR/artifacts/\`
+3. Register each artifact: \`coagent artifact --type report --path "$COAGENT_SESSION_DIR/artifacts/yourfile.md" --desc "description"\`
+4. Report back: \`coagent send --to "role:coordinator" --type handoff --msg "Done: [summary]. Artifact at $COAGENT_SESSION_DIR/artifacts/yourfile.md"\`
+5. Re-enter listen loop: \`while true; do coagent inbox; sleep 5; done\`
 `;
       if (sessionType === "engineering") {
         prompt += `
