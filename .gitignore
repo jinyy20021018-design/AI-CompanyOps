@@ -10,3 +10,5 @@ folders.json
 .gstack/
 .coagent-setup-done
 .coagent-auth
+
+report/
