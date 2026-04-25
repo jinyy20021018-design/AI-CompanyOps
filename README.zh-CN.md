@@ -19,8 +19,8 @@
 前置要求：[Node.js](https://nodejs.org/)（v20–v24）、[Docker Desktop](https://www.docker.com/products/docker-desktop/)（已启动）、[Claude Code](https://claude.ai/code)（已登录）
 
 ```bash
-git clone https://github.com/ZihaoChenz/CoAgents.git
-cd CoAgents
+git clone https://github.com/jinyy20021018-design/AI-CompanyOps.git
+cd AI-CompanyOps
 ./bin/coagent-cli
 ```
 
@@ -61,9 +61,11 @@ source ~/.zshrc
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                   浏览器（React + Vite）                      │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌────────────┐  │
-│  │ 画布模式  │  │ 概览网格  │  │ 聚焦视图  │  │ 文件浏览器 │  │
-│  └──────────┘  └──────────┘  └──────────┘  └────────────┘  │
+│  ┌──────────────────┐  ┌──────────────┐  ┌──────────────┐  │
+│  │ 概览网格          │  │ 聚焦视图     │  │ 文件浏览器   │  │
+│  │（协调者 + 智能体  │  │（全屏终端）  │  │（产出文件）  │  │
+│  │  卡片网格）       │  │              │  │              │  │
+│  └──────────────────┘  └──────────────┘  └──────────────┘  │
 └──────────────────────┬──────────────────────────────────────┘
                        │ WebSocket
 ┌──────────────────────▼──────────────────────────────────────┐
@@ -94,7 +96,6 @@ source ~/.zshrc
 ## 项目结构
 
 ```
-cli2/
 ├── bin/
 │   └── coagent-cli              # CLI — 启动/停止所有服务
 ├── backend/
@@ -112,23 +113,32 @@ cli2/
 │       ├── serverContext.ts     # 模块间共享类型
 │       ├── protocol.ts          # WebSocket 消息类型定义
 │       ├── usageLogger.ts       # 按会话计费
-│       └── __tests__/           # 31 个后端测试
+│       └── __tests__/           # 5 个测试文件（31+ 个后端测试）
 ├── frontend/
 │   └── src/
-│       ├── App.tsx              # 主应用，双布局模式
+│       ├── App.tsx              # 主应用 — 概览 / 聚焦 / 文件 三种视图模式
 │       ├── components/
+│       │   ├── OverviewGrid.tsx     # 协调者 + 智能体卡片网格布局
+│       │   ├── FocusView.tsx        # 单智能体全屏终端视图
 │       │   ├── TerminalCanvas.tsx   # 无限缩放画布
 │       │   ├── TerminalWindow.tsx   # 可拖拽终端窗口
 │       │   ├── TerminalPane.tsx     # xterm.js 终端模拟器
 │       │   ├── AgentCard.tsx        # 结构化模式智能体卡片
+│       │   ├── AgentChip.tsx        # 紧凑型智能体状态标签
+│       │   ├── ArtifactViewer.tsx   # 产出文件预览面板
 │       │   ├── FileBrowser.tsx      # 全局文件浏览器 + 预览
 │       │   ├── CoordinatorBar.tsx   # 协调者状态栏
 │       │   ├── ChatPanel.tsx        # 智能体间消息界面
-│       │   ├── TopNav.tsx           # 导航 + 文件夹选择器
-│       │   └── ...
+│       │   ├── MessageBar.tsx       # 消息输入栏
+│       │   ├── MessageTimeline.tsx  # 消息总线消息流
+│       │   ├── SpawnMenu.tsx        # 智能体启动菜单
+│       │   ├── SettingsPanel.tsx    # 主题与设置面板
+│       │   ├── WorkspaceHeader.tsx  # 工作空间标题与控制栏
+│       │   ├── ProjectSidebar.tsx   # 项目文件夹选择侧边栏
+│       │   └── TopNav.tsx           # 导航 + 视图模式切换器
 │       ├── hooks/useSocket.ts   # 自动重连的 WebSocket
 │       ├── utils/agentStatus.ts # 智能体状态检测逻辑
-│       └── __tests__/           # 19 个前端测试
+│       └── __tests__/           # 20 个前端测试
 ├── .env.example                 # 新用户环境变量模板
 ├── CHANGELOG.md                 # 发布历史
 ├── VERSION                      # 当前版本（0.3.0）

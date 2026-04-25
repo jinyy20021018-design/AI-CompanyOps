@@ -242,23 +242,63 @@ do_wizard() {
 
   [ $missing -eq 1 ] && { echo ""; fail "Fix the above and try again."; exit 1; }
 
-  # Step 2: Claude Code auth
+  # Step 2: Anthropic authentication
   head "  Step 2/5  Anthropic authentication"
   sleep 0.3
 
   local has_claude_auth=0
-  if security find-generic-password -s "Claude Code-credentials" -w &>/dev/null; then
-    local token_preview=$(security find-generic-password -s "Claude Code-credentials" -w 2>/dev/null | python3 -c "import sys,json; t=json.loads(sys.stdin.read())['claudeAiOauth']; print(f'sk-ant-...{t[\"accessToken\"][-8:]} ({t[\"subscriptionType\"]})')" 2>/dev/null)
-    ok "Claude Code logged in  ${DIM}$token_preview${RESET}"
+  local anthropic_api_key=""
+  local coagent_provider=""
+  local auth_file="$CLI_DIR/.coagent-auth"
+
+  echo -e "  How should agents authenticate with Anthropic?"
+  echo -e "  ${BOLD}  1)${RESET} Claude subscription  ${DIM}(uses your Claude Code login — no extra key needed)${RESET}"
+  echo -e "  ${BOLD}  2)${RESET} Claude API key        ${DIM}(bring your own key from console.anthropic.com)${RESET}"
+  echo ""
+  echo -ne "  ${YELLOW}Choose [1/2]:${RESET} "
+  read -r provider_choice
+
+  if [[ "$provider_choice" == "2" ]]; then
+    coagent_provider="api"
+    echo ""
+    echo -e "  ${DIM}This will open your browser to sign in to Anthropic Console.${RESET}"
+    echo -e "  ${DIM}Agents will bill against your Console account (pay-per-token).${RESET}"
+    echo ""
+    if ! claude auth login --console; then
+      fail "Console login failed — try again or choose option 1"
+      exit 1
+    fi
+    echo ""
+    ok "Anthropic Console login complete"
+    echo ""
+    echo -e "  ${DIM}One more step: paste your API key for memory services (Honcho Deriver).${RESET}"
+    echo -e "  ${DIM}Get it at: ${BOLD}https://console.anthropic.com/settings/keys${RESET}"
+    echo ""
+    echo -ne "  ${YELLOW}Paste your Anthropic API key:${RESET} "
+    read -r input_api_key
+    if [ -z "$input_api_key" ]; then
+      warn "No key provided — memory services (Deriver) won't work. Add later via: coagent setup"
+    else
+      anthropic_api_key="$input_api_key"
+      ok "Memory services key saved  ${DIM}${anthropic_api_key:0:12}...${RESET}"
+    fi
+    printf 'COAGENT_PROVIDER=api\nHONCHO_ANTHROPIC_API_KEY=%s\n' "$anthropic_api_key" > "$auth_file"
     has_claude_auth=1
   else
-    warn "Claude Code not detected"
-    echo -e "    ${DIM}Log in to Claude Code first: ${BOLD}claude${RESET}"
-    echo -e "    ${DIM}CoAgent uses your Claude Code session for LLM calls (no separate API key needed).${RESET}"
-    echo ""
-    echo -ne "  ${YELLOW}Continue without Claude auth? [y/N]:${RESET} "
-    read -r answer
-    [[ "$answer" =~ ^[Yy] ]] || exit 0
+    coagent_provider="subscription"
+    if security find-generic-password -s "Claude Code-credentials" -w &>/dev/null; then
+      local token_preview=$(security find-generic-password -s "Claude Code-credentials" -w 2>/dev/null | python3 -c "import sys,json; t=json.loads(sys.stdin.read())['claudeAiOauth']; print(f'sk-ant-...{t[\"accessToken\"][-8:]} ({t[\"subscriptionType\"]})')" 2>/dev/null)
+      ok "Claude Code logged in  ${DIM}$token_preview${RESET}"
+      has_claude_auth=1
+    else
+      warn "Claude Code not detected"
+      echo -e "    ${DIM}Log in to Claude Code first: ${BOLD}claude${RESET}"
+      echo ""
+      echo -ne "  ${YELLOW}Continue without Claude auth? [y/N]:${RESET} "
+      read -r answer
+      [[ "$answer" =~ ^[Yy] ]] || exit 0
+    fi
+    printf 'COAGENT_PROVIDER=subscription\n' > "$auth_file"
   fi
 
   # Step 3: Gemini API key
@@ -372,9 +412,15 @@ do_wizard() {
       fi
     fi
 
-    # Inject Claude token
-    if [ $has_claude_auth -eq 1 ]; then
+    # Inject Anthropic token into Honcho .env
+    if [ $has_claude_auth -eq 1 ] && [ "$coagent_provider" = "subscription" ]; then
       bash "$HONCHO_DIR/scripts/refresh-oauth-token.sh" 2>/dev/null
+    elif [ "$coagent_provider" = "api" ] && [ -n "$anthropic_api_key" ]; then
+      if grep -q "^LLM_ANTHROPIC_API_KEY=" "$HONCHO_DIR/.env"; then
+        sed -i '' "s|^LLM_ANTHROPIC_API_KEY=.*|LLM_ANTHROPIC_API_KEY=$anthropic_api_key|" "$HONCHO_DIR/.env"
+      else
+        echo "LLM_ANTHROPIC_API_KEY=$anthropic_api_key" >> "$HONCHO_DIR/.env"
+      fi
     fi
 
     ok "Configuration saved"
@@ -418,9 +464,23 @@ do_start_services() {
   banner
   echo -e "  ${DIM}Starting services...${RESET}"
 
-  # Refresh OAuth token
-  if [ -f "$HONCHO_DIR/scripts/refresh-oauth-token.sh" ]; then
-    bash "$HONCHO_DIR/scripts/refresh-oauth-token.sh" 2>/dev/null
+  # Load auth config
+  local auth_file="$CLI_DIR/.coagent-auth"
+  local saved_provider="subscription"
+  local saved_api_key=""
+  if [ -f "$auth_file" ]; then
+    saved_provider=$(grep "^COAGENT_PROVIDER=" "$auth_file" | cut -d= -f2)
+    saved_api_key=$(grep "^HONCHO_ANTHROPIC_API_KEY=" "$auth_file" | cut -d= -f2-)
+  fi
+
+  if [ "$saved_provider" = "api" ]; then
+    ok "Auth: Anthropic Console  ${DIM}(claude auth login --console)${RESET}"
+  else
+    # Subscription: refresh OAuth token into Honcho .env
+    if [ -f "$HONCHO_DIR/scripts/refresh-oauth-token.sh" ]; then
+      bash "$HONCHO_DIR/scripts/refresh-oauth-token.sh" 2>/dev/null
+    fi
+    ok "Auth: Claude subscription"
   fi
 
   # Docker
