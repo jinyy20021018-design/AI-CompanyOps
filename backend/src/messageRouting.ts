@@ -5,6 +5,7 @@ import type { ScratchpadEntry } from "./protocol.js";
 import type { ServerContext } from "./serverContext.js";
 import { getHoncho, getAgentPeerId, getProjectSessionId, isHonchoAvailable } from "./honchoClient.js";
 import { validateMessage, sanitizeForPty } from "./guardrail.js";
+import { isMessageAllowedByAcl, resolveSenderAuthority } from "./routingAcl.js";
 
 /**
  * Create a reusable scratchpad message routing callback.
@@ -35,6 +36,7 @@ export function createScratchpadRouter(
     // including ephemeral ones not currently in sessionMeta.
     const folderEntries = ctx.terminalRegistry.load(folder.path);
     const workerPushTypes = ["blocker", "question", "task_assign", "handoff"];
+    const senderAuthority = resolveSenderAuthority(scratchMsg, folderEntries);
 
     console.log("[watcher] new msg from:", scratchMsg.from, "to:", scratchMsg.to, "entries:", folderEntries.length);
 
@@ -59,6 +61,11 @@ export function createScratchpadRouter(
       console.log("[watcher] entry:", entry.sessionName, "title:", entry.title, "tag:", entry.tag, "role:", entry.role, "shouldDeliver:", shouldDeliver, "hasPTY:", ctx.ptyManager.has(tid));
 
       if (!shouldDeliver) continue;
+      const acl = isMessageAllowedByAcl(scratchMsg, senderAuthority, entry);
+      if (!acl.allowed) {
+        console.warn("[acl] blocked message:", scratchMsg.msgType, "from", scratchMsg.from, "to", entry.sessionName, "-", acl.reason ?? "not allowed");
+        continue;
+      }
 
       // Inbox write — works even without an active PTY
       try {
