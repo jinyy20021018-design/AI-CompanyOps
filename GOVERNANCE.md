@@ -96,7 +96,7 @@ jq 'select(.category == "risk_acceptance")' _shared/decisions.jsonl
 
 If an agent produces output that violates ETHICS.md or this governance framework:
 
-1. **QA flags it** as an ethics blocker via `coagent send --type blocker`
+1. **QA flags it** as an ethics blocker via `coagent send --to "role:coordinator" --type blocker --msg "[ETHICS BLOCKER] ..."`
 2. **Coordinator holds** the phase transition and surfaces the concern to the human principal
 3. **Human decides**: correct the output, override with documented rationale, or abort the run
 4. **Decision is logged** via `coagent decision --category ethics_concern --decision "..." --rationale "..."`
@@ -110,7 +110,7 @@ If an agent produces output that violates ETHICS.md or this governance framework
 |---|---|---|---|
 | All agents share the same OS user | Agent cannot be prevented at OS level from reading another's session dir | CLAUDE.md filesystem isolation instruction | Per-agent Docker containers |
 | `from` field in scratchpad is self-reported | Identity spoofing possible | `guardrail.ts` identity flag; CLAUDE.md trust hierarchy | Signed messages or shared secret per session |
-| Permission matrix is prompt-enforced, not runtime-enforced | A prompt-injected agent could violate permissions | Two-layer injection defence (guardrail + CLAUDE.md) | Runtime ACL in `messageRouting.ts` |
+| Permission matrix is only partially runtime-enforced | Current ACL enforces high-risk flows (`task_assign`, `blocker`) but not all message policies | Guardrail + CLAUDE.md + runtime ACL for critical message types | Expand ACL coverage to all policy rules and signed sender identity |
 | No cryptographic audit log | `decisions.jsonl` can be edited after the fact | Append-only by convention; Honcho provides secondary record | Append-only log with hash chaining |
 
 ---

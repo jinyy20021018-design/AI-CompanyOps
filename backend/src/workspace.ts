@@ -9,9 +9,11 @@ export function ensureWorkspace(folderPath: string): void {
   const sessions = path.join(workspace, "sessions");
 
   const memoryDir = path.join(shared, "memory");
+  const sharedArtifactsDir = path.join(shared, "artifacts");
   fs.mkdirSync(shared, { recursive: true });
   fs.mkdirSync(sessions, { recursive: true });
   fs.mkdirSync(memoryDir, { recursive: true });
+  fs.mkdirSync(sharedArtifactsDir, { recursive: true });
 
   // Seed shared.md (team whiteboard)
   const sharedMdFile = path.join(memoryDir, "shared.md");
@@ -94,7 +96,7 @@ Check it periodically: \`coagent inbox\`
 - \`coagent tasks\` — task ownership and status
 - \`coagent sessions\` — active terminal registry
 - Read \`_shared/scratchpad.jsonl\` to see full message history across all agents
-- Read other sessions' \`notes.md\` or \`summary.json\` in \`sessions/\` to understand prior work
+- Read \`_shared/artifacts.jsonl\` for artifact metadata and \`_shared/artifacts/\` for shared deliverables
 
 ## Action skills (read when needed)
 Skills are in \`_shared/skills/\`. Read the relevant one before performing that action:
@@ -246,14 +248,22 @@ artifact)
   # Copy the file into the session artifacts dir so the UI can display it
   ARTIFACTS_DIR="$COAGENT_SESSION_DIR/artifacts"
   mkdir -p "$ARTIFACTS_DIR"
+  SHARED_ARTIFACTS_DIR="$SHARED_DIR/artifacts/$SESSION_NAME"
+  mkdir -p "$SHARED_ARTIFACTS_DIR"
   FNAME="$(basename "$APATH")"
   DEST="$ARTIFACTS_DIR/$FNAME"
+  SHARED_DEST="$SHARED_ARTIFACTS_DIR/$FNAME"
   if [[ "$APATH" != "$DEST" && -f "$APATH" ]]; then
     cp "$APATH" "$DEST"
   fi
-  jq -n -c --arg ts "$(ts)" --arg session "$SESSION_NAME" --arg type "$TYPE" --arg path "$APATH" --arg desc "$DESC" \\
-    '{ts:\$ts,session:\$session,type:\$type,path:\$path,description:\$desc}' >> "$SHARED_DIR/artifacts.jsonl"
-  echo "Artifact registered: $DEST"
+  if [[ -f "$DEST" ]]; then
+    cp "$DEST" "$SHARED_DEST"
+  elif [[ -f "$APATH" ]]; then
+    cp "$APATH" "$SHARED_DEST"
+  fi
+  jq -n -c --arg ts "$(ts)" --arg session "$SESSION_NAME" --arg type "$TYPE" --arg path "$DEST" --arg sharedPath "$SHARED_DEST" --arg sourcePath "$APATH" --arg desc "$DESC" \\
+    '{ts:\$ts,session:\$session,type:\$type,path:\$path,sharedPath:\$sharedPath,sourcePath:\$sourcePath,description:\$desc}' >> "$SHARED_DIR/artifacts.jsonl"
+  echo "Artifact registered: $DEST (shared: $SHARED_DEST)"
   ;;
 
 # ── decision ──────────────────────────────────────────────────
@@ -1018,7 +1028,7 @@ Before completing your task, write a \`summary.json\` to your session directory:
 \`\`\`bash
 cat > "$COAGENT_SESSION_DIR/summary.json" << 'EOF'
 {
-  "agent": "$SESSION_NAME",
+  "agent": "$COAGENT_SESSION_NAME",
   "task": "brief description of what was assigned",
   "keyFindings": ["finding 1", "finding 2"],
   "decisionsLog": ["decision 1 — rationale", "decision 2 — rationale"],
@@ -1057,8 +1067,8 @@ ${commRules}
 \`\`\`bash
 coagent artifact --type report --path "$COAGENT_SESSION_DIR/artifacts/prd.md" --desc "Product Requirements Document"
 coagent send --to "role:coordinator" --type handoff --msg "Done: PRD complete at $COAGENT_SESSION_DIR/artifacts/prd.md"
-coagent send --to "name:Engineering" --type handoff --msg "PRD ready: $COAGENT_SESSION_DIR/artifacts/prd.md"
-coagent send --to "name:Marketing" --type handoff --msg "PRD ready: $COAGENT_SESSION_DIR/artifacts/prd.md"
+coagent send --to "name:Engineering" --type handoff --msg "PRD ready: $COAGENT_SHARED_DIR/artifacts/product/prd.md"
+coagent send --to "name:Marketing" --type handoff --msg "PRD ready: $COAGENT_SHARED_DIR/artifacts/product/prd.md"
 \`\`\`
 3. Then enter listen loop:
 \`\`\`bash
@@ -1164,7 +1174,7 @@ Include this filled in. Any "TBD" answer = blocker, not handoff:
 coagent artifact --type report --path "$COAGENT_SESSION_DIR/artifacts/tech-plan.md" --desc "Technical Architecture Plan"
 ADR_COUNT=$(ls "$COAGENT_SESSION_DIR/artifacts/adr/" 2>/dev/null | wc -l | tr -d ' ')
 coagent send --to "role:coordinator" --type handoff --msg "Done: tech-plan.md ($ADR_COUNT ADRs logged). Confidence: [H/M/L]. Biggest unknown: [...]"
-coagent send --to "name:QA" --type handoff --msg "Architecture ready: $COAGENT_SESSION_DIR/artifacts/tech-plan.md — see §8 (observability) and §10 (failure modes) for test targets."
+coagent send --to "name:QA" --type handoff --msg "Architecture ready: $COAGENT_SHARED_DIR/artifacts/engineering/tech-plan.md — see §8 (observability) and §10 (failure modes) for test targets."
 \`\`\`
 Then enter listen loop:
 \`\`\`bash
@@ -1207,7 +1217,7 @@ ${commRules}
 \`\`\`bash
 coagent artifact --type report --path "$COAGENT_SESSION_DIR/artifacts/marketing-plan.md" --desc "Go-to-Market Strategy"
 coagent send --to "role:coordinator" --type handoff --msg "Done: GTM strategy at $COAGENT_SESSION_DIR/artifacts/marketing-plan.md"
-coagent send --to "name:Finance" --type handoff --msg "Marketing budget estimates ready: $COAGENT_SESSION_DIR/artifacts/marketing-plan.md"
+coagent send --to "name:Finance" --type handoff --msg "Marketing budget estimates ready: $COAGENT_SHARED_DIR/artifacts/marketing/marketing-plan.md"
 \`\`\`
 4. Then enter listen loop:
 \`\`\`bash
@@ -1251,15 +1261,16 @@ You are professionally paranoid. You read every spec looking for edge cases. You
 ${commRules}
 
 ## Your job when you receive a task_assign
-1. Read Engineering's architecture first (path in task or inbox handoff)
-2. Also read Product's PRD for acceptance criteria if available
-3. Write test strategy to \`$COAGENT_SESSION_DIR/artifacts/qa-plan.md\`
-4. **IMMEDIATELY after saving the file**, run ALL of these commands:
+1. Read Engineering's architecture from \`$COAGENT_SHARED_DIR/artifacts/engineering/tech-plan.md\` (or from a handoff path that points under \`$COAGENT_SHARED_DIR/artifacts/\`)
+2. Also read Product's PRD at \`$COAGENT_SHARED_DIR/artifacts/product/prd.md\` for acceptance criteria if available
+3. If either artifact is missing, ask the owning department for the missing path before finalizing (Engineering for tech plan, Product for PRD)
+4. Write test strategy to \`$COAGENT_SESSION_DIR/artifacts/qa-plan.md\`
+5. **IMMEDIATELY after saving the file**, run ALL of these commands:
 \`\`\`bash
 coagent artifact --type report --path "$COAGENT_SESSION_DIR/artifacts/qa-plan.md" --desc "QA Test Strategy"
 coagent send --to "role:coordinator" --type handoff --msg "Done: QA plan at $COAGENT_SESSION_DIR/artifacts/qa-plan.md"
 \`\`\`
-5. Then enter listen loop:
+6. Then enter listen loop:
 \`\`\`bash
 while true; do coagent inbox; sleep 15; done
 \`\`\`

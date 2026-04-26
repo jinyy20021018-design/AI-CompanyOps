@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { isMessageAllowedByAcl, resolveSenderAuthority } from "../routingAcl.js";
 
 // Test the routing rules extracted from messageRouting.ts
 // We test the pure routing logic without the full ServerContext
@@ -44,6 +45,20 @@ const workerB: RoutingEntry = {
   sessionName: "2026-03-20_15-00_claude_c3d4",
   title: "DB Worker",
   tag: "worker",
+  role: "worker",
+};
+
+const engineering: RoutingEntry = {
+  sessionName: "engineering",
+  title: "Engineering",
+  tag: "engineering",
+  role: "worker",
+};
+
+const qa: RoutingEntry = {
+  sessionName: "qa",
+  title: "QA",
+  tag: "qa",
   role: "worker",
 };
 
@@ -98,5 +113,61 @@ describe("scratchpad message routing", () => {
     expect(shouldDeliver(msg, workerA)).toBe(false);
     expect(shouldDeliver(msg, workerB)).toBe(false);
     expect(shouldDeliver(msg, coordinator)).toBe(false);
+  });
+});
+
+describe("scratchpad ACL rules", () => {
+  const entries = [coordinator, engineering, qa, workerA];
+
+  it("allows coordinator task_assign to departments", () => {
+    const msg = { from: "coordinator", to: "name:Engineering", msgType: "task_assign" };
+    const sender = resolveSenderAuthority(msg, entries);
+    expect(isMessageAllowedByAcl(msg, sender, engineering).allowed).toBe(true);
+  });
+
+  it("blocks non-coordinator task_assign", () => {
+    const msg = { from: "engineering", to: "name:QA", msgType: "task_assign" };
+    const sender = resolveSenderAuthority(msg, entries);
+    expect(isMessageAllowedByAcl(msg, sender, qa).allowed).toBe(false);
+  });
+
+  it("allows coordinator task_assign to spawned workers", () => {
+    const msg = { from: "coordinator", to: "role:worker", msgType: "task_assign" };
+    const sender = resolveSenderAuthority(msg, entries);
+    expect(isMessageAllowedByAcl(msg, sender, workerA).allowed).toBe(true);
+  });
+
+  it("allows blockers only when recipient is coordinator", () => {
+    const msg = { from: "qa", to: "role:coordinator", msgType: "blocker" };
+    const sender = resolveSenderAuthority(msg, entries);
+    expect(isMessageAllowedByAcl(msg, sender, coordinator).allowed).toBe(true);
+    expect(isMessageAllowedByAcl(msg, sender, engineering).allowed).toBe(false);
+  });
+
+  it("blocks blocker sent by coordinator", () => {
+    const msg = { from: "coordinator", to: "role:coordinator", msgType: "blocker" };
+    const sender = resolveSenderAuthority(msg, entries);
+    expect(isMessageAllowedByAcl(msg, sender, coordinator).allowed).toBe(false);
+  });
+
+  it("blocks privileged messages from unknown senders", () => {
+    const msg = { from: "spoofed-agent", to: "name:QA", msgType: "task_assign" };
+    const sender = resolveSenderAuthority(msg, entries);
+    expect(sender.kind).toBe("unknown");
+    expect(isMessageAllowedByAcl(msg, sender, qa).allowed).toBe(false);
+  });
+
+  it("treats department-name spoofing as unknown without registry entry", () => {
+    const msg = { from: "engineering", to: "name:QA", msgType: "task_assign" };
+    const sender = resolveSenderAuthority(msg, [coordinator, qa, workerA]); // no engineering entry
+    expect(sender.kind).toBe("unknown");
+    expect(isMessageAllowedByAcl(msg, sender, qa).allowed).toBe(false);
+  });
+
+  it("blocks unknown sender task_assign to spawned workers", () => {
+    const msg = { from: "spoofed-agent", to: "role:worker", msgType: "task_assign" };
+    const sender = resolveSenderAuthority(msg, [coordinator, qa, workerA]);
+    expect(sender.kind).toBe("unknown");
+    expect(isMessageAllowedByAcl(msg, sender, workerA).allowed).toBe(false);
   });
 });
