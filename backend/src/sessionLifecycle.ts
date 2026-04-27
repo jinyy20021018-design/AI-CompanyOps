@@ -105,8 +105,8 @@ coagent send --to "name:Marketing" --type task_assign --msg "Create GTM strategy
 
 ### Phase 3 — after Engineering AND Marketing report done
 \`\`\`bash
-coagent send --to "name:QA" --type task_assign --msg "Create test strategy for: [user request]. Architecture is at [path from Engineering's handoff]."
-coagent send --to "name:Finance" --type task_assign --msg "Budget analysis for: [user request]. Tech plan at [eng path], marketing plan at [mkt path]."
+coagent send --to "name:QA" --type task_assign --msg "Create test strategy for: [user request]. Architecture is at [path from Engineering's handoff — artifacts/architecture.md]."
+coagent send --to "name:Finance" --type task_assign --msg "Financial model and budget/ROI for: [user request]. PASTE full absolute paths: PRD=[path to prd.md] GTM=[.../artifacts/gtm.md] ARCHITECTURE=[.../artifacts/architecture.md] QA(optional)=[.../artifacts/qa-review.md]"
 \`\`\`
 
 ## Status board
