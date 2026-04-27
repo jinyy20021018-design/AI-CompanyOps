@@ -320,6 +320,21 @@ const server = http.createServer((req, res) => {
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ path: null, cancelled: true }));
     }
+  } else if (req.method === "GET" && req.url === "/health") {
+    const mem = process.memoryUsage();
+    const health = {
+      status: "ok",
+      uptime_seconds: Math.floor(process.uptime()),
+      timestamp: new Date().toISOString(),
+      pid: process.pid,
+      memory: {
+        rss_mb: Math.round(mem.rss / 1024 / 1024),
+        heap_used_mb: Math.round(mem.heapUsed / 1024 / 1024),
+        heap_total_mb: Math.round(mem.heapTotal / 1024 / 1024),
+      },
+    };
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(health));
   } else {
     res.writeHead(404);
     res.end();
