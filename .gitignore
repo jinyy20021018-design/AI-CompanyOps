@@ -11,3 +11,6 @@ folders.json
 .coagent-setup-done
 tmp/
 docs/specs/
+.coagent-auth
+
+report/

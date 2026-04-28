@@ -22,6 +22,7 @@ import { getHoncho, getProjectSessionId, isHonchoAvailable } from "./honchoClien
 import { ensureWorkspace } from "./workspace.js";
 import { createSessionFolder, updateActiveSession, finalizeSession, scanSessionHistory, writeSessionContext } from "./sessionLifecycle.js";
 import { createScratchpadRouter } from "./messageRouting.js";
+import { validateMessage } from "./guardrail.js";
 import { recordSpawnEvent, recordExitEvent, injectCoordinatorContext } from "./honchoIntegration.js";
 
 const PORT = 3001;
@@ -1274,17 +1275,27 @@ coagent task done --id t1 --result "Done"
         const sharedDir = path.join(folder.path, "CoAgent_workspace", "_shared");
         const scratchpadPath = path.join(sharedDir, "scratchpad.jsonl");
         console.log("[chat:send] writing to", scratchpadPath, "to:", msg.to, "msg:", msg.msg.slice(0, 60));
-        const entry = {
+        const rawEntry = {
           ts: new Date().toISOString(),
-          from: "user",
+          from: "user" as const,
           to: msg.to,
           tag: msg.msgType ?? "task_assign",
           msg: msg.msg,
-          ref: null,
+          ref: null as null,
           id: crypto.randomUUID(),
           msgType: msg.msgType ?? "task_assign",
           status: "sent",
         };
+        const guardrail = validateMessage(rawEntry);
+        if (guardrail.flags.length > 0) {
+          console.warn("[guardrail] chat:send flags:", guardrail.flags.map(f => `${f.type}:${f.detail}`).join(", "));
+        }
+        if (!guardrail.allowed) {
+          console.warn("[guardrail] chat:send BLOCKED — prompt injection from user");
+          send(ws, { type: "chat:error", message: "Message blocked: potential prompt injection detected." });
+          break;
+        }
+        const entry = guardrail.sanitized;
         try {
           fs.appendFileSync(scratchpadPath, JSON.stringify(entry) + "\n");
           console.log("[chat:send] write succeeded");

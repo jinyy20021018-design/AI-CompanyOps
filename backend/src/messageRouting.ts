@@ -4,6 +4,8 @@ import type { ScratchpadMessage } from "./scratchpadWatcher.js";
 import type { ScratchpadEntry } from "./protocol.js";
 import type { ServerContext } from "./serverContext.js";
 import { getHoncho, getAgentPeerId, getProjectSessionId, isHonchoAvailable } from "./honchoClient.js";
+import { validateMessage, sanitizeForPty } from "./guardrail.js";
+import { isMessageAllowedByAcl, resolveSenderAuthority } from "./routingAcl.js";
 
 /**
  * Create a reusable scratchpad message routing callback.
@@ -18,10 +20,23 @@ export function createScratchpadRouter(
   folder: { path: string; id: string },
 ): (scratchMsg: ScratchpadMessage) => void {
   return (scratchMsg: ScratchpadMessage) => {
+    // ── Guardrail check ──────────────────────────────────────────────────────
+    const guardrail = validateMessage(scratchMsg);
+    if (guardrail.flags.length > 0) {
+      console.warn("[guardrail] flags on message from", scratchMsg.from, ":", guardrail.flags.map(f => `${f.type}:${f.detail}`).join(", "));
+    }
+    if (!guardrail.allowed) {
+      console.warn("[guardrail] BLOCKED message from", scratchMsg.from, "— prompt injection detected");
+      return;
+    }
+    // Use sanitized copy (PII redacted, control chars stripped) for all downstream operations
+    scratchMsg = guardrail.sanitized;
+
     // Route using registry as source of truth — covers ALL workers,
     // including ephemeral ones not currently in sessionMeta.
     const folderEntries = ctx.terminalRegistry.load(folder.path);
     const workerPushTypes = ["blocker", "question", "task_assign", "handoff"];
+    const senderAuthority = resolveSenderAuthority(scratchMsg, folderEntries);
 
     console.log("[watcher] new msg from:", scratchMsg.from, "to:", scratchMsg.to, "entries:", folderEntries.length);
 
@@ -46,6 +61,11 @@ export function createScratchpadRouter(
       console.log("[watcher] entry:", entry.sessionName, "title:", entry.title, "tag:", entry.tag, "role:", entry.role, "shouldDeliver:", shouldDeliver, "hasPTY:", ctx.ptyManager.has(tid));
 
       if (!shouldDeliver) continue;
+      const acl = isMessageAllowedByAcl(scratchMsg, senderAuthority, entry);
+      if (!acl.allowed) {
+        console.warn("[acl] blocked message:", scratchMsg.msgType, "from", scratchMsg.from, "to", entry.sessionName, "-", acl.reason ?? "not allowed");
+        continue;
+      }
 
       // Inbox write — works even without an active PTY
       try {
@@ -89,17 +109,16 @@ export function createScratchpadRouter(
             ? true
             : ["question", "blocker", "handoff", "task_assign"].includes(scratchMsg.msgType ?? "");
           const idle = Date.now() - ctx.ptyManager.getLastOutputTime(tid) > 3000;
+          const notifText = `You received a [${scratchMsg.msgType}] message from ${sanitizeForPty(scratchMsg.from, 40)}: "${sanitizeForPty(scratchMsg.msg)}". Run coagent inbox, read it, and act on it.`;
           if (idle || urgentInterrupt) {
             if (urgentInterrupt && !idle) {
               // Break out of any running sleep/loop so Claude can react immediately
               ctx.ptyManager.write(tid, "\x03");
               setTimeout(() => {
-                const notifText = `You received a [${scratchMsg.msgType}] message from ${scratchMsg.from}: "${scratchMsg.msg.slice(0, 120)}". Run coagent inbox, read it, and act on it.`;
                 ctx.ptyManager.write(tid, notifText);
                 setTimeout(() => ctx.ptyManager.write(tid, "\r"), 150);
               }, 300);
             } else {
-              const notifText = `You received a [${scratchMsg.msgType}] message from ${scratchMsg.from}: "${scratchMsg.msg.slice(0, 120)}". Run coagent inbox, read it, and act on it.`;
               ctx.ptyManager.write(tid, notifText);
               setTimeout(() => ctx.ptyManager.write(tid, "\r"), 150);
             }
