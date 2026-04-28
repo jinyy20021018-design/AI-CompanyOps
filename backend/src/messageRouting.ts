@@ -103,8 +103,25 @@ export function createScratchpadRouter(
           ? scratchMsg.msgType !== "status_update" || scratchMsg.from !== "system"
           : !!(scratchMsg.msgType && workerPushTypes.includes(scratchMsg.msgType));
         if (shouldPush) {
-          if (Date.now() - ctx.ptyManager.getLastOutputTime(tid) > 1000) {
-            ctx.ptyManager.write(tid, `You received a [${scratchMsg.msgType}] message from ${sanitizeForPty(scratchMsg.from, 40)}: "${sanitizeForPty(scratchMsg.msg)}". Run coagent inbox, read it, and act on it.\r`);
+          // For coordinator: every incoming message is urgent (they must react to everything)
+          // For workers: only task_assign/question/blocker/handoff interrupt
+          const urgentInterrupt = isCoordinator
+            ? true
+            : ["question", "blocker", "handoff", "task_assign"].includes(scratchMsg.msgType ?? "");
+          const idle = Date.now() - ctx.ptyManager.getLastOutputTime(tid) > 3000;
+          const notifText = `You received a [${scratchMsg.msgType}] message from ${sanitizeForPty(scratchMsg.from, 40)}: "${sanitizeForPty(scratchMsg.msg)}". Run coagent inbox, read it, and act on it.`;
+          if (idle || urgentInterrupt) {
+            if (urgentInterrupt && !idle) {
+              // Break out of any running sleep/loop so Claude can react immediately
+              ctx.ptyManager.write(tid, "\x03");
+              setTimeout(() => {
+                ctx.ptyManager.write(tid, notifText);
+                setTimeout(() => ctx.ptyManager.write(tid, "\r"), 150);
+              }, 300);
+            } else {
+              ctx.ptyManager.write(tid, notifText);
+              setTimeout(() => ctx.ptyManager.write(tid, "\r"), 150);
+            }
           } else {
             if (!ctx.pendingNotifications.has(tid)) ctx.pendingNotifications.set(tid, []);
             ctx.pendingNotifications.get(tid)!.push(scratchMsg);

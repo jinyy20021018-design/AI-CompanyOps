@@ -125,8 +125,10 @@ export type ServerMessage =
   | { type: "message:urgent"; terminalId: string; from: string; msgType: string; preview: string; messageId?: string }
   | { type: "artifact:update"; terminalId: string; files: ArtifactFileInfo[] }
   | { type: "artifact:content"; terminalId: string; fileName: string; content: string }
+  | { type: "artifact:preview:open"; terminalId: string; url: string }
   | { type: "scratchpad:history"; pathId: string; entries: ScratchpadEntry[] }
-  | { type: "scratchpad:message"; pathId: string; entry: ScratchpadEntry };
+  | { type: "scratchpad:message"; pathId: string; entry: ScratchpadEntry }
+  | { type: "coordinator:complete"; terminalId: string; sessionName: string; folderPath: string };
 
 export type ClientMessage =
   | { type: "folder:add"; path: string }

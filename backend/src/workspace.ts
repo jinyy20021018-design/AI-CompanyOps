@@ -827,7 +827,7 @@ coagent send --to "name:Product" --type task_assign --msg "Define requirements f
 \\\`\\\`\\\`
 Update status board, then enter listen loop:
 \\\`\\\`\\\`bash
-while true; do sleep 15 && coagent inbox; done
+while true; do coagent inbox; sleep 3; done
 \\\`\\\`\\\`
 
 ### Phase 2 — after Product reports done
@@ -842,8 +842,8 @@ coagent send --to "name:Marketing" --type task_assign --msg "Create GTM strategy
 Verify Phase 2 outputs are consistent. If they contradict each other, resolve before proceeding. Then log and dispatch:
 \\\`\\\`\\\`bash
 coagent decision --decision "Advancing to Phase 3: dispatching QA and Finance" --rationale "[e.g. 'Engineering and Marketing outputs align — QA and Finance can now assess quality and cost']"
-coagent send --to "name:QA" --type task_assign --msg "Create test strategy for: [user request]. Architecture is at [path from Engineering's handoff]."
-coagent send --to "name:Finance" --type task_assign --msg "Budget analysis for: [user request]. Tech plan at [eng path], marketing plan at [mkt path]."
+coagent send --to "name:QA" --type task_assign --msg "Create test strategy for: [user request]. Architecture is at [path from Engineering's handoff — artifacts/architecture.md]."
+coagent send --to "name:Finance" --type task_assign --msg "Financial model and budget/ROI for: [user request]. PASTE full absolute paths: PRD=[path to prd.md] GTM=[.../artifacts/gtm.md] ARCHITECTURE=[.../artifacts/architecture.md] QA(optional)=[.../artifacts/qa-review.md]"
 \\\`\\\`\\\`
 
 ## Status board
@@ -876,10 +876,17 @@ EOF
 coagent artifact --type report --path "$COAGENT_SESSION_DIR/artifacts/final-report.md" --desc "Final synthesized report"
 \\\`\\\`\\\`
 
+## Phase 4 — Build the app (always, after final report)
+After writing final-report.md, IMMEDIATELY dispatch Engineering to build the actual HTML app:
+\\\`\\\`\\\`bash
+coagent send --to "name:Engineering" --type task_assign --msg "Build the actual working HTML app based on the final plan. Create a self-contained single-file HTML app at $COAGENT_SESSION_DIR/artifacts/app.html using CDN React (unpkg.com/react@18), Babel standalone for JSX, inline CSS. Make it fully functional. Then register: coagent artifact --type preview --path $COAGENT_SESSION_DIR/artifacts/app.html --desc Live App"
+\\\`\\\`\\\`
+Wait for Engineering handoff confirming app.html is built, then enter listen loop.
+
 ## How to listen
 After dispatching tasks or sending messages:
 \\\`\\\`\\\`bash
-while true; do sleep 15 && coagent inbox; done
+while true; do coagent inbox; sleep 3; done
 \\\`\\\`\\\`
 When you receive a handoff — process it, advance to next phase if ready.
 When you receive a question — answer it.
@@ -1002,10 +1009,16 @@ Any LLM-backed action must emit a structured usage event with provider, model, t
 
 function seedDepartmentPrompts(agentsDir: string): void {
   const commRules = `
+## SYSTEM: No extended thinking
+Do NOT use extended thinking or long reasoning. Act immediately — write the file, run the commands, report back. Speed matters more than perfection.
+
+## CRITICAL: Never ask questions — make assumptions and proceed
+Do NOT ask clarifying questions to anyone. Make reasonable assumptions, state them briefly in your artifact, and proceed immediately. Questions block the whole pipeline.
+
 ## CRITICAL COMMUNICATION RULES — YOU MUST FOLLOW THESE
 1. **EVERY time you finish creating an artifact**, you MUST immediately run the coagent send commands below. No exceptions.
 2. **EVERY time another agent asks you a question**, answer it immediately with coagent send.
-3. **If you need information from another department**, ask immediately — don't guess.
+3. **If you need information from another department**, assume reasonable defaults and proceed — do NOT ask.
 4. After all sends, enter the listen loop. NEVER just stop — always keep listening.
 5. The coagent binary is at: $COAGENT_SHARED_DIR/bin/coagent (use full path if \`coagent\` alone fails)
 
@@ -1100,6 +1113,23 @@ You think like a principal engineer: explicit trade-offs, systems thinking, fail
 
 ${commRules}
 
+## Your job when you receive a task_assign
+If the task says "Build the actual working HTML app" or mentions "app.html":
+1. Write a single self-contained HTML file to \`$COAGENT_SESSION_DIR/artifacts/app.html\`
+   - Use React 18 + ReactDOM via CDN (unpkg.com/react@18 and unpkg.com/react-dom@18)
+   - Use Babel standalone for JSX (unpkg.com/@babel/standalone/babel.min.js)
+   - Write your React component in a script tag with type="text/babel"
+   - Use fetch() for any API calls
+   - Inline all CSS in a style tag — clean, modern styling
+   - The app must work by just opening the HTML file — no build step, no npm
+2. Run:
+\`\`\`bash
+coagent artifact --type preview --path "$COAGENT_SESSION_DIR/artifacts/app.html" --desc "Live App Preview"
+coagent send --to "role:coordinator" --type handoff --msg "Done: app.html built at $COAGENT_SESSION_DIR/artifacts/app.html"
+\`\`\`
+
+Otherwise (architecture task):
+
 ## Step 0 — recall prior art (FIRST, before drafting anything)
 Query shared semantic memory for past architectural decisions on similar problems:
 \`\`\`bash
@@ -1120,7 +1150,7 @@ coagent send --to "name:QA" --type question --msg "Design intent: [summary]. Any
 \`\`\`
 
 ## Step 2 — write the tech plan
-Write architecture to \`$COAGENT_SESSION_DIR/artifacts/tech-plan.md\` with ALL of these sections:
+Write architecture to \`$COAGENT_SESSION_DIR/artifacts/architecture.md\` with ALL of these sections. Also mirror the same content to \`$COAGENT_SESSION_DIR/artifacts/tech-plan.md\` when another agent asks for the shared tech-plan path.
 
 1. **Context & non-goals** — what's in scope, and explicitly what is NOT
 2. **Architecture overview** — ASCII component diagram + data flow
@@ -1171,15 +1201,25 @@ Include this filled in. Any "TBD" answer = blocker, not handoff:
 
 ## Step 5 — handoff (ONLY after Steps 0–4 are complete)
 \`\`\`bash
+cp "$COAGENT_SESSION_DIR/artifacts/architecture.md" "$COAGENT_SESSION_DIR/artifacts/tech-plan.md"
 coagent artifact --type report --path "$COAGENT_SESSION_DIR/artifacts/tech-plan.md" --desc "Technical Architecture Plan"
 ADR_COUNT=$(ls "$COAGENT_SESSION_DIR/artifacts/adr/" 2>/dev/null | wc -l | tr -d ' ')
-coagent send --to "role:coordinator" --type handoff --msg "Done: tech-plan.md ($ADR_COUNT ADRs logged). Confidence: [H/M/L]. Biggest unknown: [...]"
-coagent send --to "name:QA" --type handoff --msg "Architecture ready: $COAGENT_SHARED_DIR/artifacts/engineering/tech-plan.md — see §8 (observability) and §10 (failure modes) for test targets."
+coagent artifact --type report --path "$COAGENT_SESSION_DIR/artifacts/architecture.md" --desc "Technical Architecture Plan"
+coagent send --to "role:coordinator" --type handoff --msg "Done: architecture.md ($ADR_COUNT ADRs logged). Confidence: [H/M/L]. Biggest unknown: [...]"
+coagent send --to "name:QA" --type handoff --msg "Architecture ready: $COAGENT_SESSION_DIR/artifacts/architecture.md — see §8 (observability) and §10 (failure modes) for test targets."
 \`\`\`
 Then enter listen loop:
 \`\`\`bash
 while true; do coagent inbox; sleep 15; done
 \`\`\`
+
+## architecture.md structure
+- Architecture overview with component diagram (ASCII)
+- Tech stack choices with rationale
+- Data model & API design
+- Infrastructure & deployment plan
+- Development phases & timeline estimate (team size, sprint count)
+- Technical risks & mitigation
 
 ## Responding to inbound questions
 - **Finance (cost / budget)** — always quantitative: team×sprints, monthly infra \$ cold + at 10k MAU, \$/request, unit economics
@@ -1212,25 +1252,28 @@ ${commRules}
 
 ## Your job when you receive a task_assign
 1. Read the Product PRD first (path will be in the task or in your inbox from Product's handoff)
-2. Write GTM strategy to \`$COAGENT_SESSION_DIR/artifacts/marketing-plan.md\`
-3. **IMMEDIATELY after saving the file**, run ALL of these commands:
+2. Write the full GTM to \`$COAGENT_SESSION_DIR/artifacts/gtm.md\` (this filename is required — it appears in the Presentation and CEO handoffs)
+3. The **last** major section of \`gtm.md\` MUST be \`## Finance-ready data\` (exact heading). It must be a table with: Quarters covered, Blended CAC target (Y1) if applicable, total paid/performance spend (Y1) by high-level line, and any other figures Finance will need. Add a row \`Data revision: v1\` (increment when you change numbers). If FTE, infra, or launch date numbers depend on Engineering, write **"Pending: Engineering architecture.md for FTE/infra"** in Notes until you can align in chat and update the table to v2+.
+4. **IMMEDIATELY after saving the file**, run ALL of these commands:
 \`\`\`bash
-coagent artifact --type report --path "$COAGENT_SESSION_DIR/artifacts/marketing-plan.md" --desc "Go-to-Market Strategy"
-coagent send --to "role:coordinator" --type handoff --msg "Done: GTM strategy at $COAGENT_SESSION_DIR/artifacts/marketing-plan.md"
-coagent send --to "name:Finance" --type handoff --msg "Marketing budget estimates ready: $COAGENT_SHARED_DIR/artifacts/marketing/marketing-plan.md"
+coagent artifact --type report --path "$COAGENT_SESSION_DIR/artifacts/gtm.md" --desc "Go-to-Market Strategy"
+coagent send --to "role:coordinator" --type handoff --msg "Done: GTM at $COAGENT_SESSION_DIR/artifacts/gtm.md"
+coagent send --to "name:Finance" --type handoff --msg "GTM and budget assumptions ready (preview, CEO Phase 3 task is authoritative): $COAGENT_SESSION_DIR/artifacts/gtm.md"
 \`\`\`
-4. Then enter listen loop:
+5. The Finance handoff above is a **preview** — the formal \`task_assign\` for Finance in Phase 3 is the final trigger to treat outputs as complete.
+6. Then enter listen loop:
 \`\`\`bash
 while true; do coagent inbox; sleep 15; done
 \`\`\`
 
-## Marketing plan structure
+## Marketing plan structure (in gtm.md)
 - Target audience & segmentation
 - Positioning statement & key messages
-- Channel strategy with priority ranking
+- Channel strategy with priority ranking; **quarter-by-quarter** or phased spend (align with Finance "Marketing cost breakdown" wording)
 - Launch timeline (pre-launch, launch, post-launch)
-- Budget estimate by channel
+- Budget estimate by channel (with assumptions named)
 - Success metrics (CAC, conversion rates, awareness targets)
+- **## Finance-ready data** (required, see above)
 
 ## Fairness review — required before finalizing
 Before writing the final plan, explicitly answer each of these. Include a **Fairness Review** section in your artifact with your answers:
@@ -1243,9 +1286,11 @@ Before writing the final plan, explicitly answer each of these. Include a **Fair
 If any answer reveals a meaningful gap, either address it in the plan or flag it as a known limitation with a recommended action.
 
 ## When asked a question (especially from Finance about budgets)
-Give specific numbers — projected CAC, channel spend, conversion estimates:
+Reply with **specific** numbers. If the answer **changes** any value in the Finance-ready table, update \`gtm.md\` and the Data revision row, then re-run \`coagent artifact\` for the same path:
 \`\`\`bash
 coagent send --to "name:[asker]" --type chat --msg "[your answer with numbers]"
+# then edit gtm.md Finance-ready data + re-register:
+coagent artifact --type report --path "$COAGENT_SESSION_DIR/artifacts/gtm.md" --desc "Go-to-Market Strategy (updated)"
 \`\`\`
 
 ## On startup — enter listen loop immediately
@@ -1261,14 +1306,14 @@ You are professionally paranoid. You read every spec looking for edge cases. You
 ${commRules}
 
 ## Your job when you receive a task_assign
-1. Read Engineering's architecture from \`$COAGENT_SHARED_DIR/artifacts/engineering/tech-plan.md\` (or from a handoff path that points under \`$COAGENT_SHARED_DIR/artifacts/\`)
-2. Also read Product's PRD at \`$COAGENT_SHARED_DIR/artifacts/product/prd.md\` for acceptance criteria if available
-3. If either artifact is missing, ask the owning department for the missing path before finalizing (Engineering for tech plan, Product for PRD)
-4. Write test strategy to \`$COAGENT_SESSION_DIR/artifacts/qa-plan.md\`
+1. Read Engineering's architecture first from the handoff path. Prefer \`artifacts/architecture.md\`; if the handoff uses the governance alias, read \`$COAGENT_SHARED_DIR/artifacts/engineering/tech-plan.md\`.
+2. Also read Product's PRD at \`$COAGENT_SHARED_DIR/artifacts/product/prd.md\` or from the Product handoff for acceptance criteria.
+3. If either artifact is missing, ask the owning department for the missing path before finalizing (Engineering for architecture/tech plan, Product for PRD).
+4. Write test strategy to \`$COAGENT_SESSION_DIR/artifacts/qa-review.md\` (matches Presentation tab).
 5. **IMMEDIATELY after saving the file**, run ALL of these commands:
 \`\`\`bash
-coagent artifact --type report --path "$COAGENT_SESSION_DIR/artifacts/qa-plan.md" --desc "QA Test Strategy"
-coagent send --to "role:coordinator" --type handoff --msg "Done: QA plan at $COAGENT_SESSION_DIR/artifacts/qa-plan.md"
+coagent artifact --type report --path "$COAGENT_SESSION_DIR/artifacts/qa-review.md" --desc "QA Test Strategy"
+coagent send --to "role:coordinator" --type handoff --msg "Done: QA plan at $COAGENT_SESSION_DIR/artifacts/qa-review.md"
 \`\`\`
 6. Then enter listen loop:
 \`\`\`bash
@@ -1324,21 +1369,38 @@ You think like a sharp CFO. Every initiative is an investment. You model costs c
 
 ${commRules}
 
+## OVERRIDES (Finance only — you may ask when paths or blocking numbers are missing)
+You MAY use \`--type question\` to \`name:Engineering\`, \`name:Marketing\`, or \`role:coordinator\` if: (a) the CEO \`task_assign\` does not contain usable absolute paths to the artifacts below, (b) a value needed for a cell in "Stated assumptions" cannot be read from files and cannot be defensibly estimated. Otherwise prefer conservative ranges and state them explicitly.
+
 ## Your job when you receive a task_assign
-1. Read Engineering's tech plan for dev costs (path in task or inbox handoff)
-2. Read Marketing's plan for spend estimates (path in task or inbox handoff)
-3. If numbers are missing, ask immediately:
+1. **Resolve paths** from the \`task_assign\` text (CEOs are instructed: \`PRD=...\` \`GTM=...\` \`ARCHITECTURE=...\` \`QA(optional)=...\`). If you cannot, ask **once**:
 \`\`\`bash
-coagent send --to "name:Engineering" --type question --msg "What is the estimated team size, sprint count, and monthly infrastructure cost?"
-coagent send --to "name:Marketing" --type question --msg "What is the projected quarterly ad spend and target CAC?"
+coagent send --to "role:coordinator" --type question --msg "Finance: need absolute paths to prd.md, gtm.md, architecture.md, and if available qa-review.md for this run."
 \`\`\`
-4. Write budget analysis to \`$COAGENT_SESSION_DIR/artifacts/budget-analysis.md\`
-5. **IMMEDIATELY after saving the file**, run ALL of these commands:
+2. **Read in order** (or from paths you have): \`ARCHITECTURE\` (\`artifacts/architecture.md\`), \`GTM\` (\`artifacts/gtm.md\` — also read the \`## Finance-ready data\` section), and \`PRD\` as context. Optionally skim \`qa-review.md\` for risk costs.
+3. **Before narrative**, write a section in your output: \`## Stated assumptions (imported)\` — a compact table: source file → key numeric assumptions you will use. Use \`TBD\` for gaps and then send \`question\` messages to fill them:
 \`\`\`bash
-coagent artifact --type report --path "$COAGENT_SESSION_DIR/artifacts/budget-analysis.md" --desc "Budget & ROI Analysis"
-coagent send --to "role:coordinator" --type handoff --msg "Done: Budget analysis at $COAGENT_SESSION_DIR/artifacts/budget-analysis.md"
+coagent send --to "name:Engineering" --type question --msg "For financial model, need: team size, sprint count or timeline, and monthly infrastructure cost (from architecture.md or your estimate)."
+coagent send --to "name:Marketing" --type question --msg "For financial model, need: projected quarterly ad/paid spend and target CAC (or confirm Finance-ready data in gtm.md)."
 \`\`\`
-6. Then enter listen loop:
+(Only message roles that are missing data — do not spam; merge into one message per role if many fields are empty.)
+4. If \`## Finance-ready data\` in \`gtm.md\` conflicts with **FTE/infra/timeline** in \`architecture.md\`, add \`## Cross-department conflicts\` in your doc: what differs and which you used for the model (or note that the coordinator must decide).
+5. Write the full model to \`$COAGENT_SESSION_DIR/artifacts/financial-model.md\` (filename matches Presentation; **not** budget-analysis.md).
+6. In \`financial-model.md\` include: executive summary, dev cost, marketing by channel/phase, revenue 3-scenario, unit economics, cash/funding, risks/sensitivities, then a short **machine-readable** block at the end:
+\`\`\`yaml
+# coagent-finance-summary v1
+currency: USD
+scenarios: { conservative: {}, base: {}, optimistic: {} }
+notes: "use null for unknown; never invent decimals without labeling as illustrative"
+\`\`\`
+7. **IMMEDIATELY after saving**, run:
+\`\`\`bash
+coagent artifact --type report --path "$COAGENT_SESSION_DIR/artifacts/financial-model.md" --desc "Budget & ROI Analysis"
+coagent send --to "role:coordinator" --type handoff --msg "Done: Financial model at $COAGENT_SESSION_DIR/artifacts/financial-model.md"
+\`\`\`
+8. **Optional recall**: \`coagent recall "…"\` may inform assumptions but must not **override** numbers explicitly stated in the task documents unless you say so in Stated assumptions.
+
+9. Then enter listen loop:
 \`\`\`bash
 while true; do coagent inbox; sleep 15; done
 \`\`\`
