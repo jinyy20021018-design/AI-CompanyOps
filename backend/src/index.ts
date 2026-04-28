@@ -38,6 +38,9 @@ const watchedDirCounts = new Map<string, number>();
 // Pending notifications for busy terminals (queued until idle)
 const pendingNotifications = new Map<string, ScratchpadMessage[]>();
 
+// Track HTML artifacts already opened so we don't re-open on every file-change scan
+const openedPreviews = new Set<string>();
+
 const server = http.createServer((req, res) => {
   // CORS headers for cross-origin requests from frontend
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -279,8 +282,7 @@ const server = http.createServer((req, res) => {
             title,
           });
 
-          artifactWatcher.watch(path.join(sessionDir, "artifacts"), (files) =>
-            broadcast({ type: "artifact:update", terminalId: session.id, files }));
+          artifactWatcher.watch(path.join(sessionDir, "artifacts"), makeArtifactCallback(session.id, broadcast));
 
           watchForNewClaudeSession(cwd, claudeSessionsBefore, (uuid) =>
             terminalRegistry.update(folderPath, session.id, { claudeSessionId: uuid }));
@@ -319,6 +321,27 @@ const server = http.createServer((req, res) => {
       // User cancelled the dialog or osascript not available
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ path: null, cancelled: true }));
+    }
+  } else if (req.method === "GET" && req.url?.startsWith("/artifact/")) {
+    // Serve artifact files for browser preview: /artifact/<terminalId>/<filename>
+    const parts = req.url.slice("/artifact/".length).split("/");
+    const terminalId = parts[0];
+    const fileName = parts.slice(1).join("/");
+    const meta = sessionMeta.get(terminalId);
+    if (!meta || !fileName) { res.writeHead(404); res.end(); return; }
+    const filePath = path.join(meta.sessionDir, "artifacts", fileName);
+    try {
+      const content = fs.readFileSync(filePath);
+      const ext = path.extname(fileName).toLowerCase();
+      const mimeTypes: Record<string, string> = {
+        ".html": "text/html", ".css": "text/css", ".js": "application/javascript",
+        ".json": "application/json", ".png": "image/png", ".jpg": "image/jpeg",
+        ".svg": "image/svg+xml", ".txt": "text/plain", ".md": "text/plain",
+      };
+      res.writeHead(200, { "Content-Type": mimeTypes[ext] ?? "application/octet-stream" });
+      res.end(content);
+    } catch {
+      res.writeHead(404); res.end();
     }
   } else {
     res.writeHead(404);
@@ -435,6 +458,21 @@ function backfillClaudeSessionIds(folderPath: string, entries: TerminalRegistryE
       usedSessionIds.add(match.sessionId);
     }
   }
+}
+
+function makeArtifactCallback(terminalId: string, sender: (msg: ServerMessage) => void) {
+  return (files: ArtifactFileInfo[]) => {
+    sender({ type: "artifact:update", terminalId, files });
+    for (const f of files) {
+      if (f.name.endsWith(".html")) {
+        const key = `${terminalId}:${f.name}`;
+        if (!openedPreviews.has(key)) {
+          openedPreviews.add(key);
+          sender({ type: "artifact:preview:open", terminalId, url: `http://localhost:3001/artifact/${terminalId}/${f.name}` } as unknown as ServerMessage);
+        }
+      }
+    }
+  };
 }
 
 function send(ws: WebSocket, msg: ServerMessage): void {
@@ -664,6 +702,9 @@ wss.on("connection", (ws: WebSocket) => {
                 sessionMeta.delete(terminalId);
               }
               send(ws, { type: "terminal:exit", terminalId, exitCode });
+              if (sessionType === "coordinator" && exitCode === 0) {
+                broadcast({ type: "coordinator:complete", terminalId, sessionName, folderPath: folder.path });
+              }
             },
             {
               COAGENT_SHARED_DIR: sharedDir,
@@ -740,9 +781,7 @@ wss.on("connection", (ws: WebSocket) => {
           });
 
           // Start watching session artifacts directory
-          artifactWatcher.watch(path.join(sessionDir, "artifacts"), (files) => {
-            send(ws, { type: "artifact:update", terminalId: session.id, files });
-          });
+          artifactWatcher.watch(path.join(sessionDir, "artifacts"), makeArtifactCallback(session.id, (m) => send(ws, m)));
 
           // Watch for the new Claude session UUID and persist it for future resume
           if (provider === "claude") {
@@ -882,9 +921,7 @@ wss.on("connection", (ws: WebSocket) => {
           updateActiveSession(meta.folderPath, meta.sessionName, "add");
 
           // Re-watch artifacts
-          artifactWatcher.watch(path.join(meta.sessionDir, "artifacts"), (files) => {
-            send(ws, { type: "artifact:update", terminalId: msg.terminalId, files });
-          });
+          artifactWatcher.watch(path.join(meta.sessionDir, "artifacts"), makeArtifactCallback(msg.terminalId, (m) => send(ws, m)));
 
           // Re-watch scratchpad
           const count = watchedDirCounts.get(sharedDir) ?? 0;
@@ -945,9 +982,7 @@ wss.on("connection", (ws: WebSocket) => {
         if (success) {
           // Re-attach artifact watcher to new WS connection
           artifactWatcher.unwatch(path.join(meta.sessionDir, "artifacts"));
-          artifactWatcher.watch(path.join(meta.sessionDir, "artifacts"), (files) => {
-            send(ws, { type: "artifact:update", terminalId: msg.terminalId, files });
-          });
+          artifactWatcher.watch(path.join(meta.sessionDir, "artifacts"), makeArtifactCallback(msg.terminalId, (m) => send(ws, m)));
 
           const bufferedOutput = ptyManager.getBufferedOutput(msg.terminalId);
           send(ws, {
@@ -1309,8 +1344,9 @@ const notificationFlushTimer = setInterval(() => {
     const lastOutput = ptyManager.getLastOutputTime(tid);
     if (Date.now() - lastOutput > 3000) {
       const summary = msgs.map(m => `[${m.msgType}] from ${m.from}: ${m.msg.slice(0, 80)}`).join("; ");
-      const prompt = `You have ${msgs.length} new message(s): ${summary}. Run coagent inbox, read them, and act on each.\r`;
+      const prompt = `You have ${msgs.length} new message(s): ${summary}. Run coagent inbox, read them, and act on each.`;
       ptyManager.write(tid, prompt);
+      setTimeout(() => ptyManager.write(tid, "\r"), 150);
       pendingNotifications.delete(tid);
     }
   }

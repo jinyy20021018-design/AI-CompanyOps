@@ -9,6 +9,8 @@ folders.json
 *.tsbuildinfo
 .gstack/
 .coagent-setup-done
+tmp/
+docs/specs/
 .coagent-auth
 
 report/
