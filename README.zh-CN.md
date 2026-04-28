@@ -16,7 +16,7 @@
 
 ## 快速开始
 
-前置要求：[Node.js](https://nodejs.org/)（v20–v24）、[Docker Desktop](https://www.docker.com/products/docker-desktop/)（已启动）、[Claude Code](https://claude.ai/code)（已登录）
+前置要求：[Node.js](https://nodejs.org/)（v20–v24）、[Docker Desktop](https://www.docker.com/products/docker-desktop/)（已启动），以及已登录的 [Claude Code](https://claude.ai/code) 或 Codex CLI
 
 ```bash
 git clone https://github.com/jinyy20021018-design/AI-CompanyOps.git
@@ -26,7 +26,7 @@ cd AI-CompanyOps
 
 就这样。交互式向导会引导你完成：
 1. 自动克隆 Honcho 记忆服务器
-2. 检测你的 Claude Code 认证
+2. 选择并登录默认智能体运行时（Claude Code 或 Codex CLI）
 3. 获取免费的 Gemini API 密钥（用于向量嵌入）
 4. 安装所有依赖（Node.js + Python）
 5. 启动全部 6 个服务并打开界面

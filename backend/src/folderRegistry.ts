@@ -3,10 +3,25 @@ import path from "node:path";
 import crypto from "node:crypto";
 import type { FolderEntry } from "./protocol.js";
 
-const DATA_FILE = path.resolve(
+const PROJECT_ROOT = path.resolve(
   import.meta.dirname ?? path.dirname(new URL(import.meta.url).pathname),
-  "../../folders.json"
+  "../.."
 );
+const DATA_FILE = path.join(PROJECT_ROOT, "folders.json");
+const AUTH_FILE = path.join(PROJECT_ROOT, ".coagent-auth");
+
+function getConfiguredDefaultProvider(): "claude" | "codex" {
+  try {
+    if (!fs.existsSync(AUTH_FILE)) return "claude";
+    const auth = fs.readFileSync(AUTH_FILE, "utf-8");
+    const explicit = auth.match(/^COAGENT_DEFAULT_PROVIDER=(claude|codex)$/m)?.[1];
+    if (explicit === "claude" || explicit === "codex") return explicit;
+    const provider = auth.match(/^COAGENT_PROVIDER=(.+)$/m)?.[1];
+    return provider === "codex" ? "codex" : "claude";
+  } catch {
+    return "claude";
+  }
+}
 
 export class FolderRegistry {
   private folders: Map<string, FolderEntry> = new Map();
@@ -54,7 +69,7 @@ export class FolderRegistry {
 
     const id = crypto.randomUUID();
     const label = path.basename(resolved);
-    const entry: FolderEntry = { id, label, path: resolved };
+    const entry: FolderEntry = { id, label, path: resolved, defaultProvider: getConfiguredDefaultProvider() };
     this.folders.set(id, entry);
     this.save();
     return entry;

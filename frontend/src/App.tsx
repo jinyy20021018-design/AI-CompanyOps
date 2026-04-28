@@ -77,16 +77,18 @@ export default function App() {
 
   // Spawn coordinator helper
   const spawnCoordinator = useCallback((pathId: string) => {
-    const engine = coordinatorEngineRef.current;
-    const toolRestriction = engine === "claude" ? " --allowedTools Bash,Read --dangerously-skip-permissions" : "";
-    if (coordinatorHasExistedRef.current.has(pathId)) {
-      pendingCommandRef.current = `${engine} --model sonnet${toolRestriction} --resume coordinator`;
+    const engine = (foldersRef.current.find((f) => f.id === pathId)?.defaultProvider ?? "claude") as "claude" | "codex";
+    coordinatorEngineRef.current = engine;
+    if (engine === "codex") {
+      pendingCommandRef.current = "codex";
+    } else if (coordinatorHasExistedRef.current.has(pathId)) {
+      pendingCommandRef.current = "claude --model sonnet --allowedTools Bash,Read --dangerously-skip-permissions --resume coordinator";
     } else {
-      pendingCommandRef.current = `${engine} --model sonnet${toolRestriction} -n coordinator`;
+      pendingCommandRef.current = "claude --model sonnet --allowedTools Bash,Read --dangerously-skip-permissions -n coordinator";
       coordinatorHasExistedRef.current.add(pathId);
     }
     console.log("[CoAgent] Sending terminal:create for coordinator", pathId);
-    send({ type: "terminal:create", pathId, x: 0, y: 0, provider: coordinatorEngineRef.current as "claude" | "codex", mode: "role", role: "coordinator" });
+    send({ type: "terminal:create", pathId, x: 0, y: 0, provider: engine, mode: "role", role: "coordinator" });
   }, [send]);
 
   // Auto-spawn coordinator when a folder becomes active

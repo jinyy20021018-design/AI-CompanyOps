@@ -242,8 +242,8 @@ do_wizard() {
 
   [ $missing -eq 1 ] && { echo ""; fail "Fix the above and try again."; exit 1; }
 
-  # Step 2: Anthropic authentication
-  head "  Step 2/5  Anthropic authentication"
+  # Step 2: Agent runtime authentication
+  head "  Step 2/5  Agent runtime authentication"
   sleep 0.3
 
   local has_claude_auth=0
@@ -251,14 +251,40 @@ do_wizard() {
   local coagent_provider=""
   local auth_file="$CLI_DIR/.coagent-auth"
 
-  echo -e "  How should agents authenticate with Anthropic?"
+  echo -e "  Which AI runtime should CoAgent use by default?"
   echo -e "  ${BOLD}  1)${RESET} Claude subscription  ${DIM}(uses your Claude Code login — no extra key needed)${RESET}"
   echo -e "  ${BOLD}  2)${RESET} Claude API key        ${DIM}(bring your own key from console.anthropic.com)${RESET}"
+  echo -e "  ${BOLD}  3)${RESET} Codex CLI             ${DIM}(uses your Codex login)${RESET}"
   echo ""
-  echo -ne "  ${YELLOW}Choose [1/2]:${RESET} "
+  echo -ne "  ${YELLOW}Choose [1/2/3]:${RESET} "
   read -r provider_choice
 
-  if [[ "$provider_choice" == "2" ]]; then
+  if [[ "$provider_choice" == "3" ]]; then
+    coagent_provider="codex"
+    if ! command -v codex &>/dev/null; then
+      fail "Codex CLI not found"
+      echo -e "    ${DIM}Install Codex CLI first, then re-run setup.${RESET}"
+      exit 1
+    fi
+    if codex login status &>/dev/null; then
+      ok "Codex logged in"
+    else
+      echo ""
+      echo -e "  ${DIM}This will start the Codex login flow.${RESET}"
+      echo ""
+      if ! codex login; then
+        fail "Codex login failed — try again or choose Claude"
+        exit 1
+      fi
+      if codex login status &>/dev/null; then
+        ok "Codex logged in"
+      else
+        fail "Codex login could not be verified"
+        exit 1
+      fi
+    fi
+    printf 'COAGENT_PROVIDER=codex\nCOAGENT_DEFAULT_PROVIDER=codex\n' > "$auth_file"
+  elif [[ "$provider_choice" == "2" ]]; then
     coagent_provider="api"
     echo ""
     echo -e "  ${DIM}This will open your browser to sign in to Anthropic Console.${RESET}"
@@ -282,7 +308,7 @@ do_wizard() {
       anthropic_api_key="$input_api_key"
       ok "Memory services key saved  ${DIM}${anthropic_api_key:0:12}...${RESET}"
     fi
-    printf 'COAGENT_PROVIDER=api\nHONCHO_ANTHROPIC_API_KEY=%s\n' "$anthropic_api_key" > "$auth_file"
+    printf 'COAGENT_PROVIDER=api\nCOAGENT_DEFAULT_PROVIDER=claude\nHONCHO_ANTHROPIC_API_KEY=%s\n' "$anthropic_api_key" > "$auth_file"
     has_claude_auth=1
   else
     coagent_provider="subscription"
@@ -298,7 +324,7 @@ do_wizard() {
       read -r answer
       [[ "$answer" =~ ^[Yy] ]] || exit 0
     fi
-    printf 'COAGENT_PROVIDER=subscription\n' > "$auth_file"
+    printf 'COAGENT_PROVIDER=subscription\nCOAGENT_DEFAULT_PROVIDER=claude\n' > "$auth_file"
   fi
 
   # Step 3: Gemini API key
@@ -473,7 +499,14 @@ do_start_services() {
     saved_api_key=$(grep "^HONCHO_ANTHROPIC_API_KEY=" "$auth_file" | cut -d= -f2-)
   fi
 
-  if [ "$saved_provider" = "api" ]; then
+  if [ "$saved_provider" = "codex" ]; then
+    if command -v codex &>/dev/null && codex login status &>/dev/null; then
+      ok "Auth: Codex CLI"
+    else
+      warn "Auth: Codex CLI not logged in"
+      echo -e "    ${DIM}Run: ${BOLD}codex login${RESET}"
+    fi
+  elif [ "$saved_provider" = "api" ]; then
     ok "Auth: Anthropic Console  ${DIM}(claude auth login --console)${RESET}"
   else
     # Subscription: refresh OAuth token into Honcho .env

@@ -18,7 +18,7 @@ Orchestrate multiple Claude agents in parallel from a visual canvas. Each agent 
 
 ## Quick Start
 
-Prerequisites: [Node.js](https://nodejs.org/) (v20–v24), [Docker Desktop](https://www.docker.com/products/docker-desktop/) (running), [Claude Code](https://claude.ai/code) (logged in)
+Prerequisites: [Node.js](https://nodejs.org/) (v20–v24), [Docker Desktop](https://www.docker.com/products/docker-desktop/) (running), and either [Claude Code](https://claude.ai/code) or the Codex CLI logged in
 
 ```bash
 git clone https://github.com/jinyy20021018-design/AI-CompanyOps.git
@@ -28,7 +28,7 @@ cd AI-CompanyOps
 
 That's it. The interactive wizard will guide you through:
 1. Cloning the Honcho memory server (automatic)
-2. Detecting your Claude Code authentication
+2. Choosing and logging in to your default agent runtime (Claude Code or Codex CLI)
 3. Getting a free Gemini API key for embeddings
 4. Installing all dependencies (Node.js + Python)
 5. Starting all 6 services and opening the UI
