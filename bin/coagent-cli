@@ -242,64 +242,35 @@ do_wizard() {
 
   [ $missing -eq 1 ] && { echo ""; fail "Fix the above and try again."; exit 1; }
 
-  # Step 2: Anthropic authentication
-  head "  Step 2/5  Anthropic authentication"
+  # Step 2: Anthropic API key
+  head "  Step 2/5  Anthropic API key"
   sleep 0.3
 
-  local has_claude_auth=0
   local anthropic_api_key=""
-  local coagent_provider=""
   local auth_file="$CLI_DIR/.coagent-auth"
 
-  echo -e "  How should agents authenticate with Anthropic?"
-  echo -e "  ${BOLD}  1)${RESET} Claude subscription  ${DIM}(uses your Claude Code login — no extra key needed)${RESET}"
-  echo -e "  ${BOLD}  2)${RESET} Claude API key        ${DIM}(bring your own key from console.anthropic.com)${RESET}"
-  echo ""
-  echo -ne "  ${YELLOW}Choose [1/2]:${RESET} "
-  read -r provider_choice
+  # Reuse existing key if already saved.
+  if [ -f "$auth_file" ]; then
+    anthropic_api_key=$(grep "^ANTHROPIC_API_KEY=" "$auth_file" 2>/dev/null | cut -d= -f2-)
+  fi
 
-  if [[ "$provider_choice" == "2" ]]; then
-    coagent_provider="api"
-    echo ""
-    echo -e "  ${DIM}This will open your browser to sign in to Anthropic Console.${RESET}"
-    echo -e "  ${DIM}Agents will bill against your Console account (pay-per-token).${RESET}"
-    echo ""
-    if ! claude auth login --console; then
-      fail "Console login failed — try again or choose option 1"
-      exit 1
-    fi
-    echo ""
-    ok "Anthropic Console login complete"
-    echo ""
-    echo -e "  ${DIM}One more step: paste your API key for memory services (Honcho Deriver).${RESET}"
+  if [ -n "$anthropic_api_key" ] && [ "$anthropic_api_key" != "" ]; then
+    ok "Anthropic API key found  ${DIM}${anthropic_api_key:0:12}...${RESET}"
+  else
+    echo -e "  ${DIM}CoAgent uses an Anthropic API key for both agents and memory services.${RESET}"
     echo -e "  ${DIM}Get it at: ${BOLD}https://console.anthropic.com/settings/keys${RESET}"
     echo ""
     echo -ne "  ${YELLOW}Paste your Anthropic API key:${RESET} "
     read -r input_api_key
     if [ -z "$input_api_key" ]; then
-      warn "No key provided — memory services (Deriver) won't work. Add later via: coagent setup"
-    else
-      anthropic_api_key="$input_api_key"
-      ok "Memory services key saved  ${DIM}${anthropic_api_key:0:12}...${RESET}"
+      fail "No key provided — agents cannot run without one."
+      exit 1
     fi
-    printf 'COAGENT_PROVIDER=api\nHONCHO_ANTHROPIC_API_KEY=%s\n' "$anthropic_api_key" > "$auth_file"
-    has_claude_auth=1
-  else
-    coagent_provider="subscription"
-    if security find-generic-password -s "Claude Code-credentials" -w &>/dev/null; then
-      local token_preview=$(security find-generic-password -s "Claude Code-credentials" -w 2>/dev/null | python3 -c "import sys,json; t=json.loads(sys.stdin.read())['claudeAiOauth']; print(f'sk-ant-...{t[\"accessToken\"][-8:]} ({t[\"subscriptionType\"]})')" 2>/dev/null)
-      ok "Claude Code logged in  ${DIM}$token_preview${RESET}"
-      has_claude_auth=1
-    else
-      warn "Claude Code not detected"
-      echo -e "    ${DIM}Log in to Claude Code first: ${BOLD}claude${RESET}"
-      echo ""
-      echo -ne "  ${YELLOW}Continue without Claude auth? [y/N]:${RESET} "
-      read -r answer
-      [[ "$answer" =~ ^[Yy] ]] || exit 0
-    fi
-    printf 'COAGENT_PROVIDER=subscription\n' > "$auth_file"
+    anthropic_api_key="$input_api_key"
+    ok "API key saved  ${DIM}${anthropic_api_key:0:12}...${RESET}"
   fi
+  printf 'ANTHROPIC_API_KEY=%s\n' "$anthropic_api_key" > "$auth_file"
+  chmod 600 "$auth_file"
 
   # Step 3: Gemini API key
   head "  Step 3/5  Embedding model"
@@ -412,10 +383,8 @@ do_wizard() {
       fi
     fi
 
-    # Inject Anthropic token into Honcho .env
-    if [ $has_claude_auth -eq 1 ] && [ "$coagent_provider" = "subscription" ]; then
-      bash "$HONCHO_DIR/scripts/refresh-oauth-token.sh" 2>/dev/null
-    elif [ "$coagent_provider" = "api" ] && [ -n "$anthropic_api_key" ]; then
+    # Inject Anthropic API key into Honcho .env (used by deriver/summary/dream).
+    if [ -n "$anthropic_api_key" ]; then
       if grep -q "^LLM_ANTHROPIC_API_KEY=" "$HONCHO_DIR/.env"; then
         sed -i '' "s|^LLM_ANTHROPIC_API_KEY=.*|LLM_ANTHROPIC_API_KEY=$anthropic_api_key|" "$HONCHO_DIR/.env"
       else
@@ -445,13 +414,17 @@ usage() {
   echo "Usage: coagent [command]"
   echo ""
   echo "Commands:"
-  echo "  (default)   Start all services"
-  echo "  stop        Stop all services"
+  echo "  (default)   Start all services (sandbox mode — each agent in its own container)"
+  echo "  stop        Stop all services + reap orphan agent containers"
   echo "  status      Show service health"
   echo "  restart     Stop then start"
   echo "  logs        Tail all service logs"
   echo "  open        Open the UI in browser"
   echo "  setup       Re-run first-time setup"
+  echo ""
+  echo "Environment overrides:"
+  echo "  COAGENT_MODE=pty                    use legacy host-PTY mode (no per-agent containers)"
+  echo "  COAGENT_HOST_PROJECTS_ROOT=...      host dir bind-mounted into agents (default: project parent)"
   echo ""
 }
 
@@ -464,39 +437,62 @@ do_start_services() {
   banner
   echo -e "  ${DIM}Starting services...${RESET}"
 
-  # Load auth config
+  # Load API key (set during the wizard).
   local auth_file="$CLI_DIR/.coagent-auth"
-  local saved_provider="subscription"
-  local saved_api_key=""
+  local anthropic_api_key=""
   if [ -f "$auth_file" ]; then
-    saved_provider=$(grep "^COAGENT_PROVIDER=" "$auth_file" | cut -d= -f2)
-    saved_api_key=$(grep "^HONCHO_ANTHROPIC_API_KEY=" "$auth_file" | cut -d= -f2-)
+    anthropic_api_key=$(grep "^ANTHROPIC_API_KEY=" "$auth_file" | cut -d= -f2-)
   fi
-
-  if [ "$saved_provider" = "api" ]; then
-    ok "Auth: Anthropic Console  ${DIM}(claude auth login --console)${RESET}"
-  else
-    # Subscription: refresh OAuth token into Honcho .env
-    if [ -f "$HONCHO_DIR/scripts/refresh-oauth-token.sh" ]; then
-      bash "$HONCHO_DIR/scripts/refresh-oauth-token.sh" 2>/dev/null
-    fi
-    ok "Auth: Claude subscription"
+  if [ -z "$anthropic_api_key" ]; then
+    fail "ANTHROPIC_API_KEY not configured. Run: ./bin/coagent-cli setup"
+    exit 1
   fi
+  export ANTHROPIC_API_KEY="$anthropic_api_key"
+  ok "Auth: Anthropic API key  ${DIM}${anthropic_api_key:0:12}...${RESET}"
 
   # Docker
   if ! docker info &>/dev/null; then
     fail "Docker is not running. Start Docker Desktop first."
     exit 1
   fi
-  cd "$HONCHO_DIR"
-  docker compose -f docker-compose.local.yml up -d 2>&1 | grep -E "Started|Running|Creating" | while read line; do log "$line"; done
+  cd "$CLI_DIR"
+
+  # Mode selection. Default = container (sandboxed agents).
+  # Override with COAGENT_MODE=pty for the legacy host-PTY mode.
+  local coagent_mode="${COAGENT_MODE:-container}"
+
+  # Use a temp file so we can both stream logs and capture the exit code (a pipe
+  # would mask compose failures behind `grep` / `while read`).
+  local compose_log
+  compose_log=$(mktemp)
+  if [ "$coagent_mode" = "container" ]; then
+    export COAGENT_HOST_PROJECTS_ROOT="${COAGENT_HOST_PROJECTS_ROOT:-$(cd "$CLI_DIR/.." && pwd)}"
+    docker compose -f docker-compose.yml --profile container up -d > "$compose_log" 2>&1
+  else
+    docker compose -f docker-compose.yml up -d postgres redis > "$compose_log" 2>&1
+  fi
+  local compose_rc=$?
+  grep -E "Started|Running|Creating" "$compose_log" 2>/dev/null | while read line; do log "$line"; done
+  if [ $compose_rc -ne 0 ]; then
+    fail "docker compose up failed (rc=$compose_rc). Full output:"
+    cat "$compose_log" >&2
+    rm -f "$compose_log"
+    exit 1
+  fi
+  rm -f "$compose_log"
+
   for i in {1..20}; do
-    PG=$(docker inspect --format='{{.State.Health.Status}}' honcho-database-1 2>/dev/null || echo "waiting")
-    RD=$(docker inspect --format='{{.State.Health.Status}}' honcho-redis-1 2>/dev/null || echo "waiting")
+    PG=$(docker inspect --format='{{.State.Health.Status}}' coagent-database-1 2>/dev/null || echo "waiting")
+    RD=$(docker inspect --format='{{.State.Health.Status}}' coagent-redis-1 2>/dev/null || echo "waiting")
     [ "$PG" = "healthy" ] && [ "$RD" = "healthy" ] && break
     sleep 1
   done
-  ok "Postgres + Redis"
+  if [ "$PG" = "healthy" ] && [ "$RD" = "healthy" ]; then
+    ok "Postgres + Redis"
+  else
+    fail "Postgres or Redis did not become healthy (PG=$PG RD=$RD)"
+    exit 1
+  fi
 
   # DB migrations (first run after Docker)
   if [ -f "$HONCHO_DIR/alembic.ini" ]; then
@@ -520,19 +516,60 @@ do_start_services() {
   DERIVER_FLUSH_ENABLED=true nohup "$UV" run python -m src.deriver > /tmp/coagent-honcho-deriver.log 2>&1 &
   ok "Memory deriver"
 
-  # Terminal Canvas
-  lsof -ti :3001 | xargs kill -9 2>/dev/null || true
-  lsof -ti :5173 | xargs kill -9 2>/dev/null || true
-  sleep 0.5
-  cd "$CLI_DIR"
-  HONCHO_BASE_URL="http://localhost:8000" HONCHO_API_KEY="local" nohup npm run dev > /tmp/coagent-terminal-canvas.log 2>&1 &
+  if [ "$coagent_mode" = "container" ]; then
+    # Backend runs in the orchestrator container (already started above).
+    local orchestrator_up=0
+    for i in {1..30}; do
+      curl -sf "http://localhost:3001/" -o /dev/null 2>/dev/null && { orchestrator_up=1; break; }
+      sleep 1
+    done
+    if [ $orchestrator_up -eq 1 ]; then
+      ok "Orchestrator (container)"
+    else
+      fail "Orchestrator did not become reachable on :3001"
+      docker logs coagent-orchestrator-1 --tail 30 2>&1 >&2
+      exit 1
+    fi
+  else
+    # Backend native (Phase A/B path).
+    lsof -ti :3001 | xargs kill -9 2>/dev/null || true
+    sleep 0.5
+    cd "$CLI_DIR"
+    HONCHO_BASE_URL="http://localhost:8000" HONCHO_API_KEY="local" nohup npm run dev:backend > /tmp/coagent-terminal-canvas.log 2>&1 &
+    local backend_up=0
+    for i in {1..15}; do
+      grep -qE "listening on (port )?3001|on :3001|http://localhost:3001" /tmp/coagent-terminal-canvas.log 2>/dev/null && { backend_up=1; break; }
+      sleep 1
+    done
+    if [ $backend_up -eq 1 ]; then
+      ok "Backend (host)"
+    else
+      fail "Backend did not start. Tail of /tmp/coagent-terminal-canvas.log:"
+      tail -20 /tmp/coagent-terminal-canvas.log >&2
+      exit 1
+    fi
+  fi
+
+  # Frontend (Docker) — already created with --profile container in container mode.
+  if [ "$coagent_mode" != "container" ]; then
+    cd "$CLI_DIR"
+    docker compose -f docker-compose.yml up -d frontend > /tmp/coagent-frontend.log 2>&1 \
+      || { fail "frontend up failed:"; cat /tmp/coagent-frontend.log >&2; exit 1; }
+  fi
+  # Verify frontend is actually serving.
+  PORT=5173
+  local fe_up=0
   for i in {1..15}; do
-    PORT=$(grep -oE 'http://localhost:[0-9]+' /tmp/coagent-terminal-canvas.log 2>/dev/null | head -1 | grep -oE '[0-9]+$')
-    [ -n "$PORT" ] && break
+    curl -sf "http://localhost:$PORT/" -o /dev/null 2>/dev/null && { fe_up=1; break; }
     sleep 1
   done
-  PORT=${PORT:-5173}
-  ok "Terminal Canvas"
+  if [ $fe_up -eq 1 ]; then
+    ok "Frontend"
+  else
+    fail "Frontend did not respond on :$PORT"
+    docker logs coagent-frontend-1 --tail 30 2>&1 >&2
+    exit 1
+  fi
 
   # Done
   echo ""
@@ -562,11 +599,11 @@ do_stop() {
   echo -e "\n  ${DIM}Stopping CoAgent...${RESET}"
 
   lsof -ti :3001 | xargs kill -9 2>/dev/null || true
-  lsof -ti :5173 | xargs kill -9 2>/dev/null || true
-  lsof -ti :5174 | xargs kill -9 2>/dev/null || true
   lsof -ti :8000 | xargs kill -9 2>/dev/null || true
   pkill -f "src.deriver" 2>/dev/null || true
-  cd "$HONCHO_DIR" 2>/dev/null && docker compose -f docker-compose.local.yml stop 2>&1 | grep -v "^$" || true
+  cd "$CLI_DIR" && docker compose -f docker-compose.yml --profile container stop 2>&1 | grep -v "^$" || true
+  # Best-effort cleanup of any orphaned agent containers from a crashed orchestrator.
+  docker ps -aq --filter "label=coagent.managed=true" | xargs -r docker rm -f >/dev/null 2>&1 || true
 
   echo -e "  ${GREEN}✓${RESET} All services stopped"
   echo ""
@@ -578,21 +615,18 @@ do_status() {
   echo -e "  ${BOLD}CoAgent${RESET} services"
   echo ""
 
-  PG=$(docker inspect --format='{{.State.Health.Status}}' honcho-database-1 2>/dev/null || echo "stopped")
+  PG=$(docker inspect --format='{{.State.Health.Status}}' coagent-database-1 2>/dev/null || echo "stopped")
   [ "$PG" = "healthy" ] && ok "Postgres     :5432" || fail "Postgres     :5432  ($PG)"
 
-  RD=$(docker inspect --format='{{.State.Health.Status}}' honcho-redis-1 2>/dev/null || echo "stopped")
+  RD=$(docker inspect --format='{{.State.Health.Status}}' coagent-redis-1 2>/dev/null || echo "stopped")
   [ "$RD" = "healthy" ] && ok "Redis        :6379" || fail "Redis        :6379  ($RD)"
 
   lsof -ti :8000 > /dev/null 2>&1 && ok "Honcho API   :8000" || fail "Honcho API   :8000"
   pgrep -f "src.deriver" > /dev/null 2>&1 && ok "Deriver      running" || fail "Deriver"
   lsof -ti :3001 > /dev/null 2>&1 && ok "Backend      :3001" || fail "Backend      :3001"
 
-  PORT=""
-  for p in 5173 5174 5175; do
-    lsof -ti :$p > /dev/null 2>&1 && PORT=$p && break
-  done
-  [ -n "$PORT" ] && ok "Frontend     :$PORT" || fail "Frontend"
+  FE=$(docker inspect --format='{{.State.Status}}' coagent-frontend-1 2>/dev/null || echo "stopped")
+  [ "$FE" = "running" ] && ok "Frontend     :5173" || fail "Frontend     :5173  ($FE)"
   echo ""
 }
 

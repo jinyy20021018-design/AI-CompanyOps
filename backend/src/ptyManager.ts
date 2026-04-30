@@ -1,6 +1,7 @@
 import * as pty from "node-pty";
 import crypto from "node:crypto";
 import fs from "node:fs";
+import type { AgentChannel, AgentDataListener, AgentExitListener } from "./agentChannel.js";
 
 export interface PtySession {
   id: string;
@@ -20,7 +21,7 @@ export interface PtySession {
 
 const RING_BUFFER_SIZE = 500;
 
-export class PtyManager {
+export class PtyManager implements AgentChannel {
   private sessions: Map<string, PtySession> = new Map();
 
   create(
@@ -175,6 +176,22 @@ export class PtyManager {
 
   resize(id: string, cols: number, rows: number): void {
     this.sessions.get(id)?.process.resize(cols, rows);
+  }
+
+  getPid(id: string): number | undefined {
+    return this.sessions.get(id)?.pid;
+  }
+
+  /**
+   * Subscribe a one-shot listener to a session's data stream. Returns a disposer.
+   * Used for transient watchers (e.g., "No conversation found" detection on `claude --resume`)
+   * without exposing the underlying IPty handle.
+   */
+  subscribeData(id: string, listener: (data: string) => void): () => void {
+    const session = this.sessions.get(id);
+    if (!session) return () => {};
+    const disposable = session.process.onData((data: string) => listener(data));
+    return () => disposable.dispose();
   }
 
   kill(id: string): void {

@@ -58,7 +58,7 @@ export function createScratchpadRouter(
         const target = (scratchMsg.to.startsWith("name:") ? scratchMsg.to.slice(5) : scratchMsg.to).toLowerCase();
         if ((entry.title || "").toLowerCase() === target || (entry.tag || "").toLowerCase() === target) shouldDeliver = true;
       }
-      console.log("[watcher] entry:", entry.sessionName, "title:", entry.title, "tag:", entry.tag, "role:", entry.role, "shouldDeliver:", shouldDeliver, "hasPTY:", ctx.ptyManager.has(tid));
+      console.log("[watcher] entry:", entry.sessionName, "title:", entry.title, "tag:", entry.tag, "role:", entry.role, "shouldDeliver:", shouldDeliver, "isAlive:", ctx.agentChannel.has(tid));
 
       if (!shouldDeliver) continue;
       const acl = isMessageAllowedByAcl(scratchMsg, senderAuthority, entry);
@@ -97,7 +97,7 @@ export function createScratchpadRouter(
       }
 
       // PTY injection — only if PTY is alive
-      if (ctx.ptyManager.has(tid)) {
+      if (ctx.agentChannel.has(tid)) {
         const isCoordinator = entry.role === "coordinator";
         const shouldPush = isCoordinator
           ? scratchMsg.msgType !== "status_update" || scratchMsg.from !== "system"
@@ -108,19 +108,19 @@ export function createScratchpadRouter(
           const urgentInterrupt = isCoordinator
             ? true
             : ["question", "blocker", "handoff", "task_assign"].includes(scratchMsg.msgType ?? "");
-          const idle = Date.now() - ctx.ptyManager.getLastOutputTime(tid) > 3000;
+          const idle = Date.now() - ctx.agentChannel.getLastOutputTime(tid) > 3000;
           const notifText = `You received a [${scratchMsg.msgType}] message from ${sanitizeForPty(scratchMsg.from, 40)}: "${sanitizeForPty(scratchMsg.msg)}". Run coagent inbox, read it, and act on it.`;
           if (idle || urgentInterrupt) {
             if (urgentInterrupt && !idle) {
               // Break out of any running sleep/loop so Claude can react immediately
-              ctx.ptyManager.write(tid, "\x03");
+              ctx.agentChannel.write(tid, "\x03");
               setTimeout(() => {
-                ctx.ptyManager.write(tid, notifText);
-                setTimeout(() => ctx.ptyManager.write(tid, "\r"), 150);
+                ctx.agentChannel.write(tid, notifText);
+                setTimeout(() => ctx.agentChannel.write(tid, "\r"), 150);
               }, 300);
             } else {
-              ctx.ptyManager.write(tid, notifText);
-              setTimeout(() => ctx.ptyManager.write(tid, "\r"), 150);
+              ctx.agentChannel.write(tid, notifText);
+              setTimeout(() => ctx.agentChannel.write(tid, "\r"), 150);
             }
           } else {
             if (!ctx.pendingNotifications.has(tid)) ctx.pendingNotifications.set(tid, []);

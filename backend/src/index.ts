@@ -6,7 +6,9 @@ import path from "node:path";
 import os from "node:os";
 import crypto from "node:crypto";
 import { FolderRegistry } from "./folderRegistry.js";
+import type { AgentChannel } from "./agentChannel.js";
 import { PtyManager } from "./ptyManager.js";
+import { ContainerManager } from "./containerManager.js";
 import { TerminalRegistry } from "./terminalRegistry.js";
 import {
   recordUsageEvent,
@@ -27,7 +29,33 @@ import { recordSpawnEvent, recordExitEvent, injectCoordinatorContext } from "./h
 
 const PORT = 3001;
 const registry = new FolderRegistry();
-const ptyManager = new PtyManager();
+
+// AgentChannel: pluggable agent transport.
+//   COAGENT_MODE=container (default) — Docker container per agent (sandbox)
+//   COAGENT_MODE=pty                 — node-pty in-process child (legacy)
+const agentChannel: AgentChannel = (() => {
+  const mode = process.env.COAGENT_MODE ?? "container";
+  if (mode === "container") {
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) {
+      throw new Error("COAGENT_MODE=container requires ANTHROPIC_API_KEY in the orchestrator env.");
+    }
+    return new ContainerManager({
+      dockerHost: process.env.DOCKER_HOST ?? "tcp://docker-proxy:2375",
+      agentImage: process.env.COAGENT_AGENT_IMAGE ?? "coagent/agent:claude",
+      anthropicApiKey: apiKey,
+      projectsRoot: process.env.COAGENT_PROJECTS_ROOT ?? "/projects",
+      hostProjectsRoot: process.env.COAGENT_HOST_PROJECTS_ROOT ?? "/projects",
+      orchestratorUrl: process.env.COAGENT_ORCHESTRATOR_URL ?? "http://orchestrator:3001",
+      cpus: process.env.COAGENT_AGENT_CPUS ? Number(process.env.COAGENT_AGENT_CPUS) : 1,
+      memoryBytes: process.env.COAGENT_AGENT_MEMORY_MB
+        ? Number(process.env.COAGENT_AGENT_MEMORY_MB) * 1024 * 1024
+        : 1024 * 1024 * 1024,
+    });
+  }
+  return new PtyManager();
+})();
+
 const terminalRegistry = new TerminalRegistry();
 const scratchpadWatcher = new ScratchpadWatcher();
 const artifactWatcher = new ArtifactWatcher();
@@ -181,7 +209,7 @@ const server = http.createServer((req, res) => {
           let taskInjected = false;
           let claudeOutputSoFar = "";  // only accumulate AFTER claude starts (Phase 2 only)
 
-          const session = ptyManager.create(
+          const session = await agentChannel.create(
             folder.id,
             cwd,
             folder.label,
@@ -199,7 +227,7 @@ const server = http.createServer((req, res) => {
                   /Haiku|Sonnet|Opus|Claude\s*Code/i.test(claudeOutputSoFar);
                 if (ready) {
                   taskInjected = true;
-                  setTimeout(() => ptyManager.write(terminalId, task + "\r"), 500);
+                  setTimeout(() => agentChannel.write(terminalId, task + "\r"), 500);
                 }
               }
             },
@@ -290,7 +318,7 @@ const server = http.createServer((req, res) => {
           // Phase 1: fixed 1s for shell init, then start Claude.
           // Task injection (Phase 2) happens via output-monitoring above.
           setTimeout(() => {
-            ptyManager.write(session.id, `claude --dangerously-skip-permissions --model haiku\r`);
+            agentChannel.write(session.id, `claude --dangerously-skip-permissions --model haiku\r`);
           }, 1000);
 
           res.writeHead(200, { "Content-Type": "application/json" });
@@ -380,10 +408,13 @@ function encodeClaudeProjectDir(cwd: string): string {
   return cwd.replace(/[\/_ .]/g, "-");
 }
 
+// COAGENT_CLAUDE_HOME → orchestrator-view of host's ~/.claude (read-only mount).
+const CLAUDE_HOME = process.env.COAGENT_CLAUDE_HOME ?? path.join(os.homedir(), ".claude");
+
 function snapshotClaudeSessions(cwd: string): Set<string> {
   try {
     const encoded = encodeClaudeProjectDir(cwd);
-    const projectDir = path.join(os.homedir(), ".claude", "projects", encoded);
+    const projectDir = path.join(CLAUDE_HOME, "projects", encoded);
     if (!fs.existsSync(projectDir)) return new Set();
     return new Set(fs.readdirSync(projectDir).filter((f) => f.endsWith(".jsonl")));
   } catch {
@@ -399,7 +430,7 @@ function watchForNewClaudeSession(
   onFound: (uuid: string) => void
 ): void {
   const encoded = encodeClaudeProjectDir(cwd);
-  const projectDir = path.join(os.homedir(), ".claude", "projects", encoded);
+  const projectDir = path.join(CLAUDE_HOME, "projects", encoded);
   let attempts = 0;
   const poll = () => {
     attempts++;
@@ -418,7 +449,7 @@ function watchForNewClaudeSession(
 // Backfill claudeSessionId for registry entries that predate the UUID-capture logic.
 // Reads ~/.claude/history.jsonl and matches each entry by CWD + nearest timestamp.
 function backfillClaudeSessionIds(folderPath: string, entries: TerminalRegistryEntry[]): void {
-  const historyPath = path.join(os.homedir(), ".claude", "history.jsonl");
+  const historyPath = path.join(CLAUDE_HOME, "history.jsonl");
   if (!fs.existsSync(historyPath)) return;
 
   let history: Array<{ sessionId: string; project: string; timestamp: number }> = [];
@@ -511,7 +542,7 @@ const sessionMeta = new Map<string, { folderPath: string; sessionName: string; s
 // Build the shared ServerContext used by extracted modules
 const ctx = {
   registry,
-  ptyManager,
+  agentChannel,
   terminalRegistry,
   scratchpadWatcher,
   artifactWatcher,
@@ -570,7 +601,7 @@ wss.on("connection", (ws: WebSocket) => {
         for (const [tid, meta] of sessionMeta.entries()) {
           const folder = registry.resolve(msg.pathId);
           if (folder && meta.folderPath === folder.path) {
-            ptyManager.kill(tid);
+            agentChannel.kill(tid);
             sessionMeta.delete(tid);
           }
         }
@@ -683,7 +714,7 @@ wss.on("connection", (ws: WebSocket) => {
           const claudeSessionsBefore = snapshotClaudeSessions(cwd);
 
           console.log("[Backend] Creating PTY for", sessionType, "in", cwd);
-          const session = ptyManager.create(
+          const session = await agentChannel.create(
             msg.pathId,
             cwd,
             folder.label,
@@ -738,7 +769,7 @@ wss.on("connection", (ws: WebSocket) => {
 
           const tag = sessionType === "coordinator" ? "coordinator" : (role ?? sessionType);
 
-          // Update session.json with actual terminalId (ptyManager generates its own)
+          // Update session.json with actual terminalId (agentChannel generates its own)
           const sessionJsonPath = path.join(sessionDir, "session.json");
           try {
             const sjson = JSON.parse(fs.readFileSync(sessionJsonPath, "utf-8"));
@@ -818,12 +849,12 @@ wss.on("connection", (ws: WebSocket) => {
       }
 
       case "terminal:input": {
-        ptyManager.write(msg.terminalId, msg.data);
+        agentChannel.write(msg.terminalId, msg.data);
         break;
       }
 
       case "terminal:resize": {
-        ptyManager.resize(msg.terminalId, msg.cols, msg.rows);
+        agentChannel.resize(msg.terminalId, msg.cols, msg.rows);
         break;
       }
 
@@ -838,7 +869,7 @@ wss.on("connection", (ws: WebSocket) => {
             if (STABLE_AGENTS.has(sjson.type)) break;
           } catch {}
         }
-        ptyManager.kill(msg.terminalId);
+        agentChannel.kill(msg.terminalId);
         break;
       }
 
@@ -905,7 +936,7 @@ wss.on("connection", (ws: WebSocket) => {
           send(ws, { type: "terminal:exit", terminalId, exitCode });
         };
 
-        if (!ptyManager.has(msg.terminalId)) {
+        if (!agentChannel.has(msg.terminalId)) {
           // Backend was restarted — PTY is gone. Spawn a fresh shell and auto-resume the session.
           const entries = terminalRegistry.load(meta.folderPath);
           const entry = entries.find(e => e.terminalId === msg.terminalId);
@@ -916,7 +947,7 @@ wss.on("connection", (ws: WebSocket) => {
 
           const sharedDir = path.join(meta.folderPath, "CoAgent_workspace", "_shared");
 
-          ptyManager.createWithId(
+          await agentChannel.createWithId(
             msg.terminalId,
             entry.pathId,
             meta.sessionDir,
@@ -932,7 +963,7 @@ wss.on("connection", (ws: WebSocket) => {
             }
           );
 
-          terminalRegistry.update(meta.folderPath, msg.terminalId, { status: "running", pid: ptyManager["sessions"].get(msg.terminalId)?.pid ?? entry.pid });
+          terminalRegistry.update(meta.folderPath, msg.terminalId, { status: "running", pid: agentChannel.getPid(msg.terminalId) ?? entry.pid });
           updateActiveSession(meta.folderPath, meta.sessionName, "add");
 
           // Re-watch artifacts
@@ -955,40 +986,39 @@ wss.on("connection", (ws: WebSocket) => {
           // Auto-resume the Claude/Codex session
           const provider = entry.provider ?? "claude";
           if (provider === "codex") {
-            setTimeout(() => { ptyManager.write(msg.terminalId, "codex\r"); }, 300);
+            setTimeout(() => { agentChannel.write(msg.terminalId, "codex\r"); }, 300);
           } else {
             // Use the stored Claude session UUID to bypass the interactive picker entirely.
             const uuid = entry.claudeSessionId;
             if (uuid) {
               setTimeout(() => {
-                ptyManager.write(msg.terminalId, `claude --model haiku --dangerously-skip-permissions --resume ${uuid}\r`);
+                agentChannel.write(msg.terminalId, `claude --model haiku --dangerously-skip-permissions --resume ${uuid}\r`);
               }, 300);
-              // Watch PTY output for "No conversation found" — if resume fails, start fresh
+              // Watch agent output for "No conversation found" — if resume fails, start fresh
               const termId = msg.terminalId;
-              const session = ptyManager["sessions"].get(termId);
-              if (session) {
+              if (agentChannel.has(termId)) {
                 let disposed = false;
-                const disposable = session.process.onData((data: string) => {
+                const dispose = agentChannel.subscribeData(termId, (data: string) => {
                   if (disposed) return;
                   if (data.includes("No conversation found")) {
                     disposed = true;
-                    disposable.dispose();
+                    dispose();
                     terminalRegistry.update(meta.folderPath, termId, { claudeSessionId: undefined });
-                    setTimeout(() => { ptyManager.write(termId, "claude --model haiku --dangerously-skip-permissions\r"); }, 200);
+                    setTimeout(() => { agentChannel.write(termId, "claude --model haiku --dangerously-skip-permissions\r"); }, 200);
                   }
                 });
                 // Always clean up after 6s
-                setTimeout(() => { if (!disposed) { disposed = true; disposable.dispose(); } }, 6000);
+                setTimeout(() => { if (!disposed) { disposed = true; dispose(); } }, 6000);
               }
             } else {
               // No UUID — start fresh
-              setTimeout(() => { ptyManager.write(msg.terminalId, "claude --model haiku --dangerously-skip-permissions\r"); }, 300);
+              setTimeout(() => { agentChannel.write(msg.terminalId, "claude --model haiku --dangerously-skip-permissions\r"); }, 300);
             }
           }
           break;
         }
 
-        const success = ptyManager.reattach(
+        const success = await agentChannel.reattach(
           msg.terminalId,
           (terminalId, data) => { send(ws, { type: "terminal:output", terminalId, data }); },
           onExitReconnect
@@ -999,7 +1029,7 @@ wss.on("connection", (ws: WebSocket) => {
           artifactWatcher.unwatch(path.join(meta.sessionDir, "artifacts"));
           artifactWatcher.watch(path.join(meta.sessionDir, "artifacts"), makeArtifactCallback(msg.terminalId, (m) => send(ws, m)));
 
-          const bufferedOutput = ptyManager.getBufferedOutput(msg.terminalId);
+          const bufferedOutput = agentChannel.getBufferedOutput(msg.terminalId);
           send(ws, {
             type: "terminal:reconnected",
             terminalId: msg.terminalId,
@@ -1122,7 +1152,7 @@ coagent task done --id t1 --result "Done"
         try { fs.appendFileSync(scratchpadPath, promoMsg + "\n"); } catch {}
 
         // 9. Update PTY env vars
-        ptyManager.write(msg.terminalId, `export COAGENT_SESSION_DIR="${effectiveDir}" COAGENT_SESSION_NAME="${effectiveName}"\r`);
+        agentChannel.write(msg.terminalId, `export COAGENT_SESSION_DIR="${effectiveDir}" COAGENT_SESSION_NAME="${effectiveName}"\r`);
 
         send(ws, {
           type: "terminal:promoted",
@@ -1355,28 +1385,43 @@ coagent task done --id t1 --result "Done"
 const notificationFlushTimer = setInterval(() => {
   for (const [tid, msgs] of pendingNotifications.entries()) {
     if (msgs.length === 0) continue;
-    if (!ptyManager.has(tid)) { pendingNotifications.delete(tid); continue; }
-    const lastOutput = ptyManager.getLastOutputTime(tid);
+    if (!agentChannel.has(tid)) { pendingNotifications.delete(tid); continue; }
+    const lastOutput = agentChannel.getLastOutputTime(tid);
     if (Date.now() - lastOutput > 3000) {
       const summary = msgs.map(m => `[${m.msgType}] from ${m.from}: ${m.msg.slice(0, 80)}`).join("; ");
       const prompt = `You have ${msgs.length} new message(s): ${summary}. Run coagent inbox, read them, and act on each.`;
-      ptyManager.write(tid, prompt);
-      setTimeout(() => ptyManager.write(tid, "\r"), 150);
+      agentChannel.write(tid, prompt);
+      setTimeout(() => agentChannel.write(tid, "\r"), 150);
       pendingNotifications.delete(tid);
     }
   }
 }, 3000);
 
-process.on("SIGINT", () => {
+process.on("SIGINT", async () => {
   console.log("\nShutting down...");
   clearInterval(notificationFlushTimer);
   scratchpadWatcher.unwatchAll();
   artifactWatcher.unwatchAll();
-  ptyManager.killAll();
+  await agentChannel.killAll();
   wss.close();
   process.exit(0);
 });
 
 server.listen(PORT, () => {
   console.log(`Terminal Canvas backend listening on ws://localhost:${PORT} (HTTP POST /usage for usage recording)`);
+
+  // Orphan reaper (container mode only).
+  if (agentChannel instanceof ContainerManager) {
+    const knownIds = new Set<string>();
+    try {
+      for (const folder of registry.list()) {
+        for (const entry of terminalRegistry.load(folder.path)) {
+          if (entry.status === "running") knownIds.add(entry.terminalId);
+        }
+      }
+    } catch { /* registry empty on first boot */ }
+    void agentChannel.reapOrphans(knownIds).then((n) => {
+      if (n > 0) console.log(`[reaper] removed ${n} orphaned agent container(s)`);
+    });
+  }
 });

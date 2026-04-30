@@ -287,7 +287,7 @@ decision)
   if command -v curl &>/dev/null; then
     HONCHO_BODY=$(jq -n -c --arg peer "agent-\${SESSION_NAME}" --arg content "[$CATEGORY] $DECISION — $RATIONALE" --arg type "decision" --arg folderPath "$(dirname "$(dirname "$SHARED_DIR")")" \\
       '{peer:\$peer,content:\$content,type:\$type,folderPath:\$folderPath}')
-    curl -sf -X POST http://localhost:3001/honcho/memory -H "Content-Type: application/json" -d "$HONCHO_BODY" &
+    curl -sf -X POST "\${COAGENT_ORCHESTRATOR_URL:-http://localhost:3001}/honcho/memory" -H "Content-Type: application/json" -d "$HONCHO_BODY" &
   fi
   ;;
 
@@ -309,7 +309,7 @@ memory)
   if command -v curl &>/dev/null; then
     HONCHO_BODY=$(jq -n -c --arg peer "agent-\${SESSION_NAME}" --arg content "[memory/$TYPE] $CONTENT" --arg type "$TYPE" --arg folderPath "$(dirname "$(dirname "$SHARED_DIR")")" \\
       '{peer:\$peer,content:\$content,type:\$type,folderPath:\$folderPath}')
-    curl -sf -X POST http://localhost:3001/honcho/memory -H "Content-Type: application/json" -d "$HONCHO_BODY" &
+    curl -sf -X POST "\${COAGENT_ORCHESTRATOR_URL:-http://localhost:3001}/honcho/memory" -H "Content-Type: application/json" -d "$HONCHO_BODY" &
   fi
   # Write to shared.md only if promoted (has memory.md)
   if [[ "$TARGET" == "shared" ]]; then
@@ -410,10 +410,10 @@ recall)
   ENCODED=$(printf '%s' "$QUERY" | python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.stdin.read().strip()))")
   FOLDER_PATH="$(dirname $(dirname $SHARED_DIR))"
   if [[ -n "$PEER" ]]; then
-    curl -s "http://localhost:3001/honcho/context?peer=\${PEER}&query=\${ENCODED}"
+    curl -s "\${COAGENT_ORCHESTRATOR_URL:-http://localhost:3001}/honcho/context?peer=\${PEER}&query=\${ENCODED}"
   else
     SESSION_ID="project-$(printf '%s' "$FOLDER_PATH" | sed 's/[\/\s.]/-/g')"
-    curl -s "http://localhost:3001/honcho/context?session=\${SESSION_ID}&query=\${ENCODED}"
+    curl -s "\${COAGENT_ORCHESTRATOR_URL:-http://localhost:3001}/honcho/context?session=\${SESSION_ID}&query=\${ENCODED}"
   fi
   ;;
 
@@ -433,7 +433,7 @@ spawn)
   FOLDER_PATH="\${COAGENT_FOLDER_PATH:?COAGENT_FOLDER_PATH not set}"
   ESCAPED_TITLE="$(printf '%s' "$TITLE" | python3 -c "import sys,json; print(json.dumps(sys.stdin.read()))")"
   ESCAPED_TASK="$(printf '%s' "$TASK" | python3 -c "import sys,json; print(json.dumps(sys.stdin.read()))")"
-  RESULT=$(curl -s -X POST http://localhost:3001/spawn \\
+  RESULT=$(curl -s -X POST "\${COAGENT_ORCHESTRATOR_URL:-http://localhost:3001}/spawn" \\
     -H "Content-Type: application/json" \\
     -d "{\\"folderPath\\":\\"\${FOLDER_PATH}\\",\\"title\\":\${ESCAPED_TITLE},\\"task\\":\${ESCAPED_TASK}}")
   # Print a clean line the coordinator can capture: sessionName=<name>
@@ -569,7 +569,7 @@ Types: learning, pattern, constraint
 Only for durable conclusions. Ask: "Would a new agent need this fact next week?"
 `,
     "record-usage.md": `# Record Usage
-After each completed LLM/API call, POST to http://localhost:3001/usage:
+After each completed LLM/API call, POST to $COAGENT_ORCHESTRATOR_URL/usage (defaults to http://localhost:3001):
 {"sessionDir":"$COAGENT_SESSION_DIR","event":{"ts":"...","session":"$COAGENT_SESSION_NAME","provider":"anthropic|openai|...","model":"...","input_tokens":N,"output_tokens":N,"estimated_cost_usd":0.01,"pricing_version":"..."}}
 `,
     "end-session.md": `# End Session
