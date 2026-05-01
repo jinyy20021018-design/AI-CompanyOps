@@ -24,6 +24,9 @@ export interface AgentSession {
 
 export type AgentDataListener = (id: string, data: string) => void;
 export type AgentExitListener = (id: string, exitCode: number) => void;
+export type AgentWriteOptions = {
+  raw?: boolean;
+};
 
 export interface AgentChannel {
   create(
@@ -47,7 +50,7 @@ export interface AgentChannel {
     extraEnv?: Record<string, string>
   ): AgentSession | Promise<AgentSession>;
 
-  write(id: string, data: string): void;
+  write(id: string, data: string, options?: AgentWriteOptions): void;
   resize(id: string, cols: number, rows: number): void;
   kill(id: string): void;
   has(id: string): boolean;

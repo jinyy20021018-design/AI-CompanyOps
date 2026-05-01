@@ -26,6 +26,8 @@ export type TerminalRegistryEntry = {
   claudeSessionId?: string;
 };
 
+type LivenessChecker = (entry: TerminalRegistryEntry) => boolean;
+
 export class TerminalRegistry {
   private registryPath(folderPath: string): string {
     return path.join(folderPath, "CoAgent_workspace", "_shared", "terminal-registry.json");
@@ -96,23 +98,49 @@ export class TerminalRegistry {
     });
   }
 
-  pruneStale(folderPath: string): void {
+  normalizePathId(folderPath: string, pathId: string): void {
+    const entries = this.load(folderPath);
+    let changed = false;
+    for (const entry of entries) {
+      if (entry.pathId !== pathId) {
+        entry.pathId = pathId;
+        changed = true;
+      }
+    }
+    if (changed) this.save(folderPath, entries);
+  }
+
+  pruneStale(folderPath: string, options: { isAlive?: LivenessChecker } = {}): void {
     const entries = this.load(folderPath);
     const now = Date.now();
     const twoHours = 2 * 60 * 60 * 1000;
 
     const kept = entries.filter((e) => {
-      if (e.status === "running") {
-        // Check if PID is still alive
-        try {
-          process.kill(e.pid, 0);
+      const isAlive = options.isAlive;
+      if (isAlive) {
+        if (isAlive(e)) {
+          e.status = "running";
+          delete e.exitCode;
+          delete e.exitedAt;
           return true;
-        } catch {
-          // PID is dead — mark as exited
+        }
+        if (e.status === "running") {
           e.status = "exited";
           e.exitedAt = new Date().toISOString();
           e.exitCode = -1;
           return true; // Keep but mark exited — will be pruned later
+        }
+      } else if (e.status === "running") {
+        // Check if PID is still alive. This is valid only for local PTY mode;
+        // container mode passes a Docker-backed liveness checker above.
+        try {
+          process.kill(e.pid, 0);
+          return true;
+        } catch {
+          e.status = "exited";
+          e.exitedAt = new Date().toISOString();
+          e.exitCode = -1;
+          return true;
         }
       }
       // Remove exited entries older than 2 hours

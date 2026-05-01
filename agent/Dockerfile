@@ -28,9 +28,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install Claude Code CLI globally so it's on PATH.
 RUN npm install -g @anthropic-ai/claude-code
 
+# CoAgent launches Claude Code in fresh per-session directories. Prime the
+# per-container Claude config before each launch so first-run TUI prompts do not
+# block autonomous agents.
+COPY coagent-claude /usr/local/bin/coagent-claude
+RUN chmod 755 /usr/local/bin/coagent-claude
+
 # Non-root agent user. UID 1000 matches the typical host user so bind-mount
-# permissions line up cleanly without chmod gymnastics.
-RUN useradd -m -u 1000 -s /bin/bash agent
+# permissions line up cleanly without chmod gymnastics. Some Node base images
+# already reserve UID 1000, so reuse that account when present.
+RUN existing_user="$(getent passwd 1000 | cut -d: -f1)" \
+    && if [ -n "$existing_user" ]; then \
+      usermod -l agent -d /home/agent -m "$existing_user"; \
+    else \
+      useradd -m -u 1000 -s /bin/bash agent; \
+    fi
 
 USER agent
 WORKDIR /workspace
@@ -47,5 +59,5 @@ ENV SHELL=/bin/bash \
 ENTRYPOINT ["/usr/bin/tini", "--"]
 
 # Default to an interactive bash. The orchestrator attaches via Docker stdin
-# and writes `claude --dangerously-skip-permissions --model haiku` once ready.
+# and writes `coagent-claude --permission-mode dontAsk --model haiku` once ready.
 CMD ["/bin/bash", "-l"]

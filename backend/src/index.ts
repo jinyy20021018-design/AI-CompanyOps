@@ -28,6 +28,8 @@ import { validateMessage } from "./guardrail.js";
 import { recordSpawnEvent, recordExitEvent, injectCoordinatorContext } from "./honchoIntegration.js";
 
 const PORT = 3001;
+const CLAUDE_PERMISSION_ARGS = "--allowedTools Bash,Read,Edit,Write --permission-mode dontAsk";
+const CLAUDE_HAIKU_CMD = `coagent-claude --model haiku ${CLAUDE_PERMISSION_ARGS}`;
 const registry = new FolderRegistry();
 
 // AgentChannel: pluggable agent transport.
@@ -318,7 +320,7 @@ const server = http.createServer((req, res) => {
           // Phase 1: fixed 1s for shell init, then start Claude.
           // Task injection (Phase 2) happens via output-monitoring above.
           setTimeout(() => {
-            agentChannel.write(session.id, `claude --dangerously-skip-permissions --model haiku\r`);
+            agentChannel.write(session.id, `${CLAUDE_HAIKU_CMD}\r`);
           }, 1000);
 
           res.writeHead(200, { "Content-Type": "application/json" });
@@ -330,6 +332,17 @@ const server = http.createServer((req, res) => {
       })();
     });
   } else if (req.method === "POST" && req.url === "/pick-folder") {
+    if ((process.env.COAGENT_MODE ?? "container") === "container") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({
+        path: null,
+        manual: true,
+        suggestedPath: process.env.COAGENT_DEFAULT_PROJECT_PATH ?? process.env.COAGENT_PROJECTS_ROOT ?? "/projects",
+        message: "Native folder picker is unavailable in container mode. Enter a project path inside the /projects mount.",
+      }));
+      return;
+    }
+
     // Open native macOS folder picker dialog
     try {
       const result = execSync(
@@ -554,12 +567,28 @@ const ctx = {
   broadcast,
 };
 
-// Prune stale registry entries on startup
-for (const folder of registry.list()) {
-  try {
-    terminalRegistry.pruneStale(folder.path);
-  } catch {}
+async function pruneRegistryForFolder(folderPath: string): Promise<void> {
+  if (agentChannel instanceof ContainerManager) {
+    const runningIds = await agentChannel.listRunningTerminalIds();
+    terminalRegistry.pruneStale(folderPath, {
+      isAlive: (entry) => runningIds.has(entry.terminalId),
+    });
+    return;
+  }
+  terminalRegistry.pruneStale(folderPath);
 }
+
+// Prune stale registry entries on startup. In container mode this must use
+// Docker state, not process.kill(pid), because agent PIDs live outside the
+// orchestrator container's process namespace.
+void (async () => {
+  for (const folder of registry.list()) {
+    try {
+      terminalRegistry.normalizePathId(folder.path, folder.id);
+      await pruneRegistryForFolder(folder.path);
+    } catch {}
+  }
+})();
 
 wss.on("connection", (ws: WebSocket) => {
   console.log("Client connected");
@@ -849,7 +878,7 @@ wss.on("connection", (ws: WebSocket) => {
       }
 
       case "terminal:input": {
-        agentChannel.write(msg.terminalId, msg.data);
+        agentChannel.write(msg.terminalId, msg.data, { raw: true });
         break;
       }
 
@@ -876,13 +905,18 @@ wss.on("connection", (ws: WebSocket) => {
       case "terminal:list": {
         const folder = registry.resolve(msg.pathId);
         if (!folder) break;
-        terminalRegistry.pruneStale(folder.path);
+        terminalRegistry.normalizePathId(folder.path, msg.pathId);
+        await pruneRegistryForFolder(folder.path);
         const restorable = terminalRegistry.listRestorable(folder.path);
         // Backfill claudeSessionId for older entries that don't have it yet
         backfillClaudeSessionIds(folder.path, restorable);
         // Returns running + recently-exited persistent/coordinator entries.
         // The reconnect handler will re-spawn PTYs for any that are no longer alive.
-        send(ws, { type: "terminal:list", pathId: msg.pathId, terminals: restorable });
+        send(ws, {
+          type: "terminal:list",
+          pathId: msg.pathId,
+          terminals: restorable.map((entry) => ({ ...entry, pathId: msg.pathId })),
+        });
         break;
       }
 
@@ -936,34 +970,81 @@ wss.on("connection", (ws: WebSocket) => {
           send(ws, { type: "terminal:exit", terminalId, exitCode });
         };
 
+        const entries = terminalRegistry.load(meta.folderPath);
+        const entry = entries.find(e => e.terminalId === msg.terminalId);
+        if (!entry) {
+          send(ws, { type: "terminal:error", terminalId: msg.terminalId, message: "Terminal not found" });
+          break;
+        }
+
+        const folderForMeta = registry.list().find((f) => f.path === meta.folderPath);
+        const currentPathId = folderForMeta?.id ?? entry.pathId;
+        const sharedDir = path.join(meta.folderPath, "CoAgent_workspace", "_shared");
+
         if (!agentChannel.has(msg.terminalId)) {
-          // Backend was restarted — PTY is gone. Spawn a fresh shell and auto-resume the session.
-          const entries = terminalRegistry.load(meta.folderPath);
-          const entry = entries.find(e => e.terminalId === msg.terminalId);
-          if (!entry) {
-            send(ws, { type: "terminal:error", terminalId: msg.terminalId, message: "Terminal not found" });
+          // Backend was restarted. Container mode can often reattach to the
+          // still-running Docker container; PTY mode falls through to respawn.
+          const attached = await agentChannel.reattach(
+            msg.terminalId,
+            (terminalId, data) => { send(ws, { type: "terminal:output", terminalId, data }); },
+            onExitReconnect
+          );
+          if (attached) {
+            terminalRegistry.update(meta.folderPath, msg.terminalId, {
+              status: "running",
+              pid: agentChannel.getPid(msg.terminalId) ?? entry.pid,
+              pathId: currentPathId,
+            });
+            updateActiveSession(meta.folderPath, meta.sessionName, "add");
+
+            artifactWatcher.unwatch(path.join(meta.sessionDir, "artifacts"));
+            artifactWatcher.watch(path.join(meta.sessionDir, "artifacts"), makeArtifactCallback(msg.terminalId, (m) => send(ws, m)));
+
+            const count = watchedDirCounts.get(sharedDir) ?? 0;
+            if (count === 0) {
+              scratchpadWatcher.watch(sharedDir, createScratchpadRouter(ctx, sharedDir, { path: meta.folderPath, id: currentPathId }));
+            }
+            watchedDirCounts.set(sharedDir, count + 1);
+
+            send(ws, {
+              type: "terminal:reconnected",
+              terminalId: msg.terminalId,
+              pathId: currentPathId,
+              bufferedOutput: agentChannel.getBufferedOutput(msg.terminalId),
+            });
             break;
           }
 
-          const sharedDir = path.join(meta.folderPath, "CoAgent_workspace", "_shared");
+          // No live transport exists. Spawn a fresh shell and auto-resume the session.
 
-          await agentChannel.createWithId(
-            msg.terminalId,
-            entry.pathId,
-            meta.sessionDir,
-            entry.title || entry.sessionName,
-            meta.sessionDir,
-            (terminalId, data) => { send(ws, { type: "terminal:output", terminalId, data }); },
-            onExitReconnect,
-            {
-              COAGENT_SHARED_DIR: sharedDir,
-              COAGENT_SESSION_NAME: meta.sessionName,
-              COAGENT_FOLDER_PATH: meta.folderPath,
-              PATH: `${path.join(sharedDir, "bin")}:${process.env.PATH}`,
-            }
-          );
+          try {
+            await agentChannel.createWithId(
+              msg.terminalId,
+              currentPathId,
+              meta.sessionDir,
+              entry.title || entry.sessionName,
+              meta.sessionDir,
+              (terminalId, data) => { send(ws, { type: "terminal:output", terminalId, data }); },
+              onExitReconnect,
+              {
+                COAGENT_SHARED_DIR: sharedDir,
+                COAGENT_SESSION_NAME: meta.sessionName,
+                COAGENT_FOLDER_PATH: meta.folderPath,
+                PATH: `${path.join(sharedDir, "bin")}:${process.env.PATH}`,
+              }
+            );
+          } catch (err) {
+            const message = err instanceof Error ? err.message : "Failed to reconnect terminal";
+            console.error("[Backend] terminal:reconnect createWithId FAILED:", message);
+            send(ws, { type: "terminal:error", terminalId: msg.terminalId, message });
+            break;
+          }
 
-          terminalRegistry.update(meta.folderPath, msg.terminalId, { status: "running", pid: agentChannel.getPid(msg.terminalId) ?? entry.pid });
+          terminalRegistry.update(meta.folderPath, msg.terminalId, {
+            status: "running",
+            pid: agentChannel.getPid(msg.terminalId) ?? entry.pid,
+            pathId: currentPathId,
+          });
           updateActiveSession(meta.folderPath, meta.sessionName, "add");
 
           // Re-watch artifacts
@@ -972,13 +1053,11 @@ wss.on("connection", (ws: WebSocket) => {
           // Re-watch scratchpad
           const count = watchedDirCounts.get(sharedDir) ?? 0;
           if (count === 0) {
-            const folderPath = meta.folderPath;
-            const pathId = entry.pathId;
-            scratchpadWatcher.watch(sharedDir, createScratchpadRouter(ctx, sharedDir, { path: folderPath, id: pathId }));
+            scratchpadWatcher.watch(sharedDir, createScratchpadRouter(ctx, sharedDir, { path: meta.folderPath, id: currentPathId }));
           }
           watchedDirCounts.set(sharedDir, count + 1);
 
-          send(ws, { type: "terminal:reconnected", terminalId: msg.terminalId, pathId: meta.folderPath, bufferedOutput: "" });
+          send(ws, { type: "terminal:reconnected", terminalId: msg.terminalId, pathId: currentPathId, bufferedOutput: "" });
 
           // Write recent session context to CLAUDE.md before auto-resume
           writeSessionContext(meta.sessionDir);
@@ -992,7 +1071,7 @@ wss.on("connection", (ws: WebSocket) => {
             const uuid = entry.claudeSessionId;
             if (uuid) {
               setTimeout(() => {
-                agentChannel.write(msg.terminalId, `claude --model haiku --dangerously-skip-permissions --resume ${uuid}\r`);
+                agentChannel.write(msg.terminalId, `${CLAUDE_HAIKU_CMD} --resume ${uuid}\r`);
               }, 300);
               // Watch agent output for "No conversation found" — if resume fails, start fresh
               const termId = msg.terminalId;
@@ -1004,7 +1083,7 @@ wss.on("connection", (ws: WebSocket) => {
                     disposed = true;
                     dispose();
                     terminalRegistry.update(meta.folderPath, termId, { claudeSessionId: undefined });
-                    setTimeout(() => { agentChannel.write(termId, "claude --model haiku --dangerously-skip-permissions\r"); }, 200);
+                    setTimeout(() => { agentChannel.write(termId, `${CLAUDE_HAIKU_CMD}\r`); }, 200);
                   }
                 });
                 // Always clean up after 6s
@@ -1012,7 +1091,7 @@ wss.on("connection", (ws: WebSocket) => {
               }
             } else {
               // No UUID — start fresh
-              setTimeout(() => { agentChannel.write(msg.terminalId, "claude --model haiku --dangerously-skip-permissions\r"); }, 300);
+              setTimeout(() => { agentChannel.write(msg.terminalId, `${CLAUDE_HAIKU_CMD}\r`); }, 300);
             }
           }
           break;
@@ -1033,7 +1112,7 @@ wss.on("connection", (ws: WebSocket) => {
           send(ws, {
             type: "terminal:reconnected",
             terminalId: msg.terminalId,
-            pathId: meta.folderPath,
+            pathId: currentPathId,
             bufferedOutput,
           });
           // No context injection needed — Claude already has history via --resume
@@ -1416,7 +1495,7 @@ server.listen(PORT, () => {
     try {
       for (const folder of registry.list()) {
         for (const entry of terminalRegistry.load(folder.path)) {
-          if (entry.status === "running") knownIds.add(entry.terminalId);
+          knownIds.add(entry.terminalId);
         }
       }
     } catch { /* registry empty on first boot */ }

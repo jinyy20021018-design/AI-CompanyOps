@@ -118,6 +118,8 @@ services:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:?set ANTHROPIC_API_KEY in your shell or .env}
       COAGENT_PROJECTS_ROOT: /projects
       COAGENT_HOST_PROJECTS_ROOT: ${COAGENT_HOST_PROJECTS_ROOT:?set COAGENT_HOST_PROJECTS_ROOT to your host projects dir}
+      COAGENT_DEFAULT_PROJECT_PATH: ${COAGENT_DEFAULT_PROJECT_PATH:-/projects}
+      COAGENT_STATE_DIR: /orch-state
       COAGENT_ORCHESTRATOR_URL: http://orchestrator:3001
       COAGENT_CLAUDE_HOME: /host-claude
       COAGENT_FS_POLLING: "1"
@@ -143,7 +145,7 @@ services:
       postgres:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3001/', r => process.exit(r.statusCode < 500 ? 0 : 1)).on('error', () => process.exit(1))"]
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3001/health', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
       interval: 15s
       timeout: 5s
       retries: 5

@@ -8,6 +8,7 @@ import type {
   AgentDataListener,
   AgentExitListener,
   AgentSession,
+  AgentWriteOptions,
 } from "./agentChannel.js";
 
 /**
@@ -70,6 +71,7 @@ export interface ContainerManagerOptions {
 export class ContainerManager implements AgentChannel {
   private docker: Docker;
   private sessions = new Map<string, ContainerSession>();
+  private pendingCreates = new Map<string, Promise<AgentSession>>();
 
   constructor(private readonly opts: ContainerManagerOptions) {
     // dockerode accepts a URL via the `host`+`port` pair OR a `socketPath`. We
@@ -106,8 +108,46 @@ export class ContainerManager implements AgentChannel {
     onExit: AgentExitListener,
     extraEnv?: Record<string, string>
   ): Promise<AgentSession> {
+    const existing = this.sessions.get(id);
+    if (existing) {
+      existing.onData = onData;
+      existing.onExit = onExit;
+      return this.toAgentSession(existing);
+    }
+
+    const pending = this.pendingCreates.get(id);
+    if (pending) {
+      const created = await pending;
+      const session = this.sessions.get(id);
+      if (session) {
+        session.onData = onData;
+        session.onExit = onExit;
+      }
+      return created;
+    }
+
+    const create = this.createWithIdUnlocked(id, pathId, cwd, label, sessionDir, onData, onExit, extraEnv);
+    this.pendingCreates.set(id, create);
+    try {
+      return await create;
+    } finally {
+      this.pendingCreates.delete(id);
+    }
+  }
+
+  private async createWithIdUnlocked(
+    id: string,
+    pathId: string,
+    cwd: string,
+    label: string,
+    sessionDir: string,
+    onData: AgentDataListener,
+    onExit: AgentExitListener,
+    extraEnv?: Record<string, string>
+  ): Promise<AgentSession> {
     const env = this.buildEnv(extraEnv);
     const binds = this.buildBinds();
+    await this.removeStoppedContainerWithId(id);
     const labels = {
       "coagent.managed": "true",
       "coagent.terminal_id": id,
@@ -211,12 +251,12 @@ export class ContainerManager implements AgentChannel {
     return this.sessions.get(id)?.lastOutputTime ?? 0;
   }
 
-  write(id: string, data: string): void {
+  write(id: string, data: string, options: AgentWriteOptions = {}): void {
     const session = this.sessions.get(id);
     if (!session) return;
 
-    // Same normalization PtyManager applies — keeps Ctrl+C and ANSI sequences raw.
-    if (data.length > 1 && !data.includes("\x1b")) {
+    // Same normalization PtyManager applies, unless this is raw terminal input.
+    if (!options.raw && data.length > 1 && !data.includes("\x1b")) {
       data = data.replace(/\n/g, "\r");
       if (!data.endsWith("\r")) data += "\r";
       data = data.replace(/\r+$/, "\r");
@@ -278,6 +318,23 @@ export class ContainerManager implements AgentChannel {
     return removed;
   }
 
+  async listRunningTerminalIds(): Promise<Set<string>> {
+    const ids = new Set<string>();
+    try {
+      const all = await this.docker.listContainers({
+        all: false,
+        filters: { label: ["coagent.managed=true"] },
+      });
+      for (const info of all) {
+        const tid = info.Labels?.["coagent.terminal_id"];
+        if (tid) ids.add(tid);
+      }
+    } catch (e) {
+      console.warn(`[containerManager] listRunningTerminalIds failed:`, (e as Error).message);
+    }
+    return ids;
+  }
+
   async killAll(): Promise<void> {
     const toStop = Array.from(this.sessions.values());
     this.sessions.clear();
@@ -304,7 +361,7 @@ export class ContainerManager implements AgentChannel {
     onExit: AgentExitListener
   ): Promise<boolean> {
     const session = this.sessions.get(id);
-    if (!session) return false;
+    if (!session) return this.reattachExistingContainer(id, onData, onExit);
 
     // Tear down the old stream wiring, attach a fresh one with `logs: true` to
     // replay any output Docker buffered while we were disconnected.
@@ -331,6 +388,92 @@ export class ContainerManager implements AgentChannel {
   }
 
   // ── private helpers ─────────────────────────────────────────────────────────
+
+  private async reattachExistingContainer(
+    id: string,
+    onData: AgentDataListener,
+    onExit: AgentExitListener
+  ): Promise<boolean> {
+    try {
+      const matches = await this.docker.listContainers({
+        all: false,
+        filters: {
+          label: [
+            "coagent.managed=true",
+            `coagent.terminal_id=${id}`,
+          ],
+        },
+      });
+      const info = matches[0];
+      if (!info) return false;
+
+      const container = this.docker.getContainer(info.Id);
+      const inspect = await container.inspect();
+      if (!inspect.State?.Running) return false;
+
+      const stream = (await container.attach({
+        stream: true,
+        stdin: true,
+        stdout: true,
+        stderr: true,
+        hijack: true,
+      })) as unknown as Duplex;
+
+      const sessionDir = inspect.Config?.WorkingDir || "/workspace";
+      let outputStream: fs.WriteStream | null = null;
+      try {
+        outputStream = fs.createWriteStream(`${sessionDir}/output.jsonl`, { flags: "a" });
+      } catch {}
+
+      const session: ContainerSession = {
+        id,
+        pathId: inspect.Config?.Labels?.["coagent.path_id"] ?? "",
+        cwd: sessionDir,
+        label: inspect.Config?.Labels?.["coagent.label"] ?? id,
+        containerId: container.id,
+        pid: inspect.State?.Pid ?? 0,
+        createdAt: Date.now(),
+        sessionDir,
+        container,
+        stream,
+        outputStream,
+        recentOutput: [],
+        lastOutputTime: Date.now(),
+        onData,
+        onExit,
+        extraDataListeners: new Set(),
+        exited: false,
+      };
+
+      this.sessions.set(id, session);
+      this.wireStream(session);
+      this.wireWait(session);
+      return true;
+    } catch (e) {
+      console.warn(`[containerManager] reattach existing ${id} failed:`, (e as Error).message);
+      return false;
+    }
+  }
+
+  private async removeStoppedContainerWithId(id: string): Promise<void> {
+    try {
+      const matches = await this.docker.listContainers({
+        all: true,
+        filters: {
+          label: [
+            "coagent.managed=true",
+            `coagent.terminal_id=${id}`,
+          ],
+        },
+      });
+      for (const info of matches) {
+        if (info.State === "running") continue;
+        await this.docker.getContainer(info.Id).remove({ force: true });
+      }
+    } catch (e) {
+      console.warn(`[containerManager] cleanup stopped container ${id} failed:`, (e as Error).message);
+    }
+  }
 
   private wireStream(session: ContainerSession): void {
     session.stream.on("data", (chunk: Buffer) => {
@@ -389,7 +532,7 @@ export class ContainerManager implements AgentChannel {
       TERM: "xterm-256color",
       COLUMNS: "80",
       LINES: "24",
-      ANTHROPIC_API_KEY: this.opts.anthropicApiKey,
+      COAGENT_ANTHROPIC_API_KEY: this.opts.anthropicApiKey,
       COAGENT_ORCHESTRATOR_URL: this.opts.orchestratorUrl,
       ...(extraEnv ?? {}),
     };

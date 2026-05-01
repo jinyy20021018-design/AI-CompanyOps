@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+mkdir -p "$HOME/.claude"
+
+cat > "$HOME/.claude/settings.json" <<'JSON'
+{
+  "apiKeyHelper": "printf %s \"$COAGENT_ANTHROPIC_API_KEY\""
+}
+JSON
+
+node - "$HOME/.claude.json" "$PWD" <<'NODE'
+const fs = require("node:fs");
+
+const [configPath, cwd] = process.argv.slice(2);
+let config = {};
+try {
+  config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+} catch {
+  config = {};
+}
+
+config.theme = config.theme || "dark";
+config.hasCompletedOnboarding = true;
+config.onboardingTipsCompleted = true;
+config.migrationVersion = Math.max(Number(config.migrationVersion) || 0, 12);
+config.projects = config.projects && typeof config.projects === "object" ? config.projects : {};
+config.projects[cwd] = {
+  ...(config.projects[cwd] || {}),
+  hasTrustDialogAccepted: true,
+};
+
+fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+NODE
+
+exec claude "$@"

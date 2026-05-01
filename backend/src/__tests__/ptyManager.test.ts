@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
 
 // Mirror the normalization logic from PtyManager.write
-function normalizePtyWrite(data: string): string {
-  if (data.length > 1 && !data.includes("\x1b")) {
+function normalizePtyWrite(data: string, options: { raw?: boolean } = {}): string {
+  if (!options.raw && data.length > 1 && !data.includes("\x1b")) {
     data = data.replace(/\n/g, "\r");
     if (!data.endsWith("\r")) {
       data += "\r";
@@ -31,6 +31,10 @@ describe("PTY write normalization", () => {
 
   it("does not modify single-char input (raw user keystroke)", () => {
     expect(normalizePtyWrite("a")).toBe("a");
+  });
+
+  it("does not submit multi-character raw IME input", () => {
+    expect(normalizePtyWrite("你好", { raw: true })).toBe("你好");
   });
 
   it("does not modify ANSI escape sequences", () => {

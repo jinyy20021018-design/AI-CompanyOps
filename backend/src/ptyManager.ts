@@ -1,7 +1,7 @@
 import * as pty from "node-pty";
 import crypto from "node:crypto";
 import fs from "node:fs";
-import type { AgentChannel, AgentDataListener, AgentExitListener } from "./agentChannel.js";
+import type { AgentChannel, AgentDataListener, AgentExitListener, AgentWriteOptions } from "./agentChannel.js";
 
 export interface PtySession {
   id: string;
@@ -158,10 +158,10 @@ export class PtyManager implements AgentChannel {
     return this.sessions.get(id)?.lastOutputTime ?? 0;
   }
 
-  write(id: string, data: string): void {
-    // Skip normalization for raw user input (single chars, control sequences)
-    // Only normalize programmatic writes that look like complete messages
-    if (data.length > 1 && !data.includes("\x1b")) {
+  write(id: string, data: string, options: AgentWriteOptions = {}): void {
+    // Raw terminal input must be passed through unchanged. IMEs can commit
+    // multiple characters at once, so length alone cannot identify commands.
+    if (!options.raw && data.length > 1 && !data.includes("\x1b")) {
       // Replace all internal \n with \r (PTY needs carriage return, not newline)
       data = data.replace(/\n/g, "\r");
       // Ensure it ends with \r so the input is always submitted

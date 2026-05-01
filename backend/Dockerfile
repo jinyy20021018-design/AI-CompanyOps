@@ -21,7 +21,7 @@ RUN npm install --no-audit --no-fund
 
 # Source + compile.
 COPY backend ./backend
-RUN ./node_modules/.bin/tsc -p backend
+RUN npm run build -w backend
 
 FROM node:22-bookworm-slim AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends \

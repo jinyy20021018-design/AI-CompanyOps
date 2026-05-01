@@ -432,6 +432,28 @@ usage() {
 UV="${HOME}/.local/bin/uv"
 [ ! -x "$UV" ] && UV="$(command -v uv 2>/dev/null || echo "")"
 
+export_compose_defaults() {
+  export COAGENT_PROJECTS_ROOT="${COAGENT_PROJECTS_ROOT:-/projects}"
+  export COAGENT_HOST_PROJECTS_ROOT="${COAGENT_HOST_PROJECTS_ROOT:-$(cd "$CLI_DIR/.." && pwd)}"
+  export COAGENT_DEFAULT_PROJECT_PATH="${COAGENT_DEFAULT_PROJECT_PATH:-${COAGENT_PROJECTS_ROOT}/$(basename "$CLI_DIR")}"
+}
+
+kill_local_port_listener() {
+  local port="$1"
+  local pid comm
+
+  while IFS= read -r pid; do
+    [ -z "$pid" ] && continue
+    comm="$(ps -p "$pid" -o comm= 2>/dev/null || true)"
+    case "$comm" in
+      *Docker*|*com.docker*|*vpnkit*)
+        continue
+        ;;
+    esac
+    kill -9 "$pid" 2>/dev/null || true
+  done < <(lsof -nP -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null || true)
+}
+
 # ── Start services ────────────────────────────────
 do_start_services() {
   banner
@@ -466,8 +488,8 @@ do_start_services() {
   local compose_log
   compose_log=$(mktemp)
   if [ "$coagent_mode" = "container" ]; then
-    export COAGENT_HOST_PROJECTS_ROOT="${COAGENT_HOST_PROJECTS_ROOT:-$(cd "$CLI_DIR/.." && pwd)}"
-    docker compose -f docker-compose.yml --profile container up -d > "$compose_log" 2>&1
+    export_compose_defaults
+    docker compose -f docker-compose.yml --profile container up -d --build > "$compose_log" 2>&1
   else
     docker compose -f docker-compose.yml up -d postgres redis > "$compose_log" 2>&1
   fi
@@ -520,7 +542,7 @@ do_start_services() {
     # Backend runs in the orchestrator container (already started above).
     local orchestrator_up=0
     for i in {1..30}; do
-      curl -sf "http://localhost:3001/" -o /dev/null 2>/dev/null && { orchestrator_up=1; break; }
+      curl -sf "http://localhost:3001/health" -o /dev/null 2>/dev/null && { orchestrator_up=1; break; }
       sleep 1
     done
     if [ $orchestrator_up -eq 1 ]; then
@@ -598,14 +620,38 @@ do_start() {
 do_stop() {
   echo -e "\n  ${DIM}Stopping CoAgent...${RESET}"
 
-  lsof -ti :3001 | xargs kill -9 2>/dev/null || true
-  lsof -ti :8000 | xargs kill -9 2>/dev/null || true
-  pkill -f "src.deriver" 2>/dev/null || true
-  cd "$CLI_DIR" && docker compose -f docker-compose.yml --profile container stop 2>&1 | grep -v "^$" || true
+  if ! docker info >/dev/null 2>&1; then
+    warn "Docker CLI cannot reach the Docker daemon; CoAgent containers were not stopped."
+    warn "Restart Docker Desktop, then run: make stop"
+    kill_local_port_listener 3001
+    kill_local_port_listener 8000
+    pkill -f "src.deriver" 2>/dev/null || true
+    echo ""
+    return 1
+  fi
+
+  export_compose_defaults
+  local compose_log
+  compose_log=$(mktemp)
+  cd "$CLI_DIR" && docker compose -f docker-compose.yml --profile container stop > "$compose_log" 2>&1
+  local compose_rc=$?
+  grep -v "^$" "$compose_log" 2>/dev/null || true
+  rm -f "$compose_log"
+
+  if [ $compose_rc -ne 0 ]; then
+    warn "docker compose stop failed; some containers may still be running."
+    echo ""
+    return $compose_rc
+  fi
+
   # Best-effort cleanup of any orphaned agent containers from a crashed orchestrator.
   docker ps -aq --filter "label=coagent.managed=true" | xargs -r docker rm -f >/dev/null 2>&1 || true
 
-  echo -e "  ${GREEN}✓${RESET} All services stopped"
+  kill_local_port_listener 3001
+  kill_local_port_listener 8000
+  pkill -f "src.deriver" 2>/dev/null || true
+
+  ok "All services stopped"
   echo ""
 }
 
