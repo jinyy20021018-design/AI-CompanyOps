@@ -1,22 +1,30 @@
 # CoAgent
 
-**多智能体终端画布，自带语义记忆。**
+[English README](./README.md)
 
-在可视化画布上并行编排多个 Claude 智能体。每个智能体运行在独立终端中，通过共享消息总线通信，并通过 Honcho 构建长期记忆——一个项目的知识可以自动延续到下一个项目。
+CoAgent 是一个本地优先的 Claude Code 多智能体编排工作区。它提供 React 终端画布、TypeScript orchestrator、每个 agent 独立的 Docker 运行容器、基于文件的 agent 协作机制、消息安全控制，以及由 Honcho、PostgreSQL/pgvector 和 Redis 支撑的语义记忆。
 
 ## 产品亮点
 
-- **可视化多智能体编排** — 在无限画布或结构化网格上拖拽、缩放、管理多个 Claude 终端
-- **协调者 + 工人架构** — 协调者分配任务给工人智能体，审查产出，综合结果
-- **基于 Honcho 的语义记忆** — 每次智能体交互都被提取为可搜索的观察结论；智能体可跨会话、跨项目回忆知识
-- **跨项目知识迁移** — 项目 A 的经验自动可用于项目 B
-- **实时智能体状态** — 绿色（工作中）、灰色（空闲）、红色脉冲（需要你输入）一目了然
-- **内置文件浏览器** — 在一个面板中搜索和预览所有智能体产出的文件
-- **一条命令启动** — `coagent` 启动 6 个服务并打开界面
+- 可视化多智能体工作区，支持 overview、focus、terminal、chat 和 artifact 视图。
+- 默认沙箱模式：每个 agent 一个 Docker container，由 orchestrator 动态创建和管理。
+- 基于 JSONL 工作区文件的通信：`scratchpad.jsonl`、`inbox.jsonl`、`artifacts.jsonl`、memory/audit 记录。
+- 消息路由层包含 guardrail、PII redaction、routing ACL 和终端通知 sanitisation。
+- 集成 Honcho，用于跨会话记忆、语义召回和 derived observations。
+- 通过 WebSocket 实时展示终端输出、agent 状态、消息、artifact、usage/cost summary。
+- CI 门禁包含 CodeQL SAST、Gitleaks、类型检查、构建校验、测试、AI security tests 和 dependency audit。
 
 ## 快速开始
 
-前置要求：[Node.js](https://nodejs.org/)（v20–v24）、[Docker Desktop](https://www.docker.com/products/docker-desktop/)（已启动）、[Claude Code](https://claude.ai/code)（已登录）
+### 前置要求
+
+- Node.js v20-v24
+- Docker Desktop 或支持 Compose 的 Docker Engine
+- Anthropic API key，用于 Claude Code agents
+- Gemini 或 OpenAI API key，用于 Honcho embeddings
+- macOS 或 Linux shell 环境
+
+### 方式 A：交互式设置
 
 ```bash
 git clone https://github.com/jinyy20021018-design/AI-CompanyOps.git
@@ -24,204 +32,208 @@ cd AI-CompanyOps
 ./bin/coagent-cli
 ```
 
-就这样。交互式向导会引导你完成：
-1. 自动克隆 Honcho 记忆服务器
-2. 检测你的 Claude Code 认证
-3. 获取免费的 Gemini API 密钥（用于向量嵌入）
-4. 安装所有依赖（Node.js + Python）
-5. 启动全部 6 个服务并打开界面
+首次运行时，CLI wizard 会检查依赖、配置 API keys、在需要时把 Honcho clone 到相邻目录、安装依赖、启动本地 stack，并打开 UI。
 
-重新运行向导：`./bin/coagent-cli setup`
+### 方式 B：使用 `.env`
 
-### 设置快捷命令（可选）
+```bash
+cp .env.example .env
+# 填入 ANTHROPIC_API_KEY 和一个 embedding provider key。
+make start
+```
 
-首次运行后，设置别名以便在任何地方使用 `coagent`：
+UI 地址：
+
+```text
+http://localhost:5173
+```
+
+## 常用命令
+
+| 命令 | 用途 |
+| --- | --- |
+| `./bin/coagent-cli` | 启动 CoAgent；首次运行会先执行 setup |
+| `./bin/coagent-cli setup` | 重新运行首次设置向导 |
+| `./bin/coagent-cli status` | 查看服务健康状态 |
+| `./bin/coagent-cli logs` | 查看本地服务日志 |
+| `./bin/coagent-cli stop` | 停止服务并清理 orphan agent containers |
+| `./bin/coagent-cli restart` | 停止后重新启动 |
+| `./bin/coagent-cli open` | 打开 UI |
+| `make start` | bootstrap 依赖后启动 CoAgent |
+| `make start-container` | 显式使用默认 container mode 启动 |
+| `make start-pty` | 使用 legacy host PTY mode 启动 |
+
+可选 alias：
 
 ```bash
 echo 'alias coagent="'$(pwd)'/bin/coagent-cli"' >> ~/.zshrc
 source ~/.zshrc
 ```
 
-## 命令
-
-所有命令可以用 `./bin/coagent-cli <命令>` 运行，或设置别名后用 `coagent <命令>`。
-
-```
-./bin/coagent-cli              启动所有服务（默认）
-./bin/coagent-cli stop         停止所有服务
-./bin/coagent-cli status       查看服务健康状态
-./bin/coagent-cli restart      重启所有服务
-./bin/coagent-cli logs         查看实时日志
-./bin/coagent-cli open         打开浏览器界面
-./bin/coagent-cli setup        重新运行设置向导
-```
-
 ## 架构
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                   浏览器（React + Vite）                      │
-│  ┌──────────────────┐  ┌──────────────┐  ┌──────────────┐  │
-│  │ 概览网格          │  │ 聚焦视图     │  │ 文件浏览器   │  │
-│  │（协调者 + 智能体  │  │（全屏终端）  │  │（产出文件）  │  │
-│  │  卡片网格）       │  │              │  │              │  │
-│  └──────────────────┘  └──────────────┘  └──────────────┘  │
-└──────────────────────┬──────────────────────────────────────┘
-                       │ WebSocket
-┌──────────────────────▼──────────────────────────────────────┐
-│               后端（Node.js + TypeScript）                    │
-│  ┌────────────┐  ┌──────────────┐  ┌─────────────────────┐  │
-│  │ PTY        │  │ 消息路由      │  │ Honcho 集成         │  │
-│  │ 管理器      │  │              │  │（记忆记录）          │  │
-│  └────────────┘  └──────────────┘  └──────────┬──────────┘  │
-│  ┌────────────┐  ┌──────────────┐             │              │
-│  │ 终端注册表  │  │ 会话生命周期  │             │              │
-│  └────────────┘  └──────────────┘             │              │
-└───────────────────────────────────────────────┼──────────────┘
-                                                │ HTTP
-┌───────────────────────────────────────────────▼──────────────┐
-│                  Honcho 记忆服务器（Python）                   │
-│  ┌─────────┐  ┌──────────┐  ┌─────────┐  ┌───────────────┐  │
-│  │ API     │  │ 推导器    │  │ 梦境器   │  │ 辩证器         │  │
-│  │（REST） │  │（观察）   │  │（合并）  │  │（查询）        │  │
-│  └────┬────┘  └────┬─────┘  └────┬────┘  └───────────────┘  │
-│       │            │             │                            │
-│  ┌────▼────────────▼─────────────▼────┐  ┌────────────────┐  │
-│  │  PostgreSQL + pgvector             │  │  Redis（缓存）  │  │
-│  │  （消息、观察结论、向量）            │  │                 │  │
-│  └────────────────────────────────────┘  └────────────────┘  │
-└──────────────────────────────────────────────────────────────┘
+CoAgent 将 agent runtime 和 orchestration layer 分离。Claude Code 只运行在每个 agent container 内；CoAgent 自身实现 container lifecycle、message routing、ACL、guardrails、workspace files、artifact discovery、memory recording、audit files 和 frontend observability。
+
+```mermaid
+flowchart LR
+  User["User"] --> Frontend["React frontend"]
+  Frontend <-->|WebSocket| Orchestrator["Backend / orchestrator"]
+
+  Orchestrator --> AgentChannel["AgentChannel"]
+  AgentChannel --> ContainerManager["ContainerManager"]
+  ContainerManager -->|Docker attach stdin/stdout| AgentA["Agent container: Claude Code"]
+  ContainerManager -->|Docker attach stdin/stdout| AgentB["Agent container: Claude Code"]
+
+  Orchestrator --> Scratchpad["_shared/scratchpad.jsonl"]
+  Scratchpad --> Watcher["ScratchpadWatcher"]
+  Watcher --> Guardrail["guardrail.ts"]
+  Guardrail --> ACL["routingAcl.ts"]
+  ACL --> Routing["messageRouting.ts"]
+  Routing --> Inbox["sessions/<agent>/inbox.jsonl"]
+  Routing --> Artifacts["_shared/artifacts.jsonl"]
+  Routing --> Honcho["Honcho API"]
+
+  Honcho --> Postgres[("PostgreSQL + pgvector")]
+  Honcho --> Redis[("Redis cache / locks")]
+  Deriver["Honcho Deriver"] --> Postgres
 ```
 
-## 项目结构
+## 配置
 
-```
-├── bin/
-│   └── coagent-cli              # CLI — 启动/停止所有服务
-├── backend/
-│   └── src/
-│       ├── index.ts             # HTTP + WebSocket 服务器，处理器分发
-│       ├── workspace.ts         # 工作空间脚手架（coagent CLI、模板）
-│       ├── sessionLifecycle.ts  # 会话创建/提升/降级/终结
-│       ├── messageRouting.ts    # 消息总线 → 收件箱路由（唯一入口）
-│       ├── honchoIntegration.ts # Honcho 记忆记录（启动、退出、上下文）
-│       ├── honchoClient.ts      # Honcho SDK 客户端封装
-│       ├── ptyManager.ts        # PTY 管理，写入自动 \r 规范化
-│       ├── terminalRegistry.ts  # 终端持久化状态（JSON）
-│       ├── scratchpadWatcher.ts # 消息总线文件监听
-│       ├── artifactWatcher.ts   # 产出文件监听
-│       ├── serverContext.ts     # 模块间共享类型
-│       ├── protocol.ts          # WebSocket 消息类型定义
-│       ├── usageLogger.ts       # 按会话计费
-│       └── __tests__/           # 5 个测试文件（31+ 个后端测试）
-├── frontend/
-│   └── src/
-│       ├── App.tsx              # 主应用 — 概览 / 聚焦 / 文件 三种视图模式
-│       ├── components/
-│       │   ├── OverviewGrid.tsx     # 协调者 + 智能体卡片网格布局
-│       │   ├── FocusView.tsx        # 单智能体全屏终端视图
-│       │   ├── TerminalCanvas.tsx   # 无限缩放画布
-│       │   ├── TerminalWindow.tsx   # 可拖拽终端窗口
-│       │   ├── TerminalPane.tsx     # xterm.js 终端模拟器
-│       │   ├── AgentCard.tsx        # 结构化模式智能体卡片
-│       │   ├── AgentChip.tsx        # 紧凑型智能体状态标签
-│       │   ├── ArtifactViewer.tsx   # 产出文件预览面板
-│       │   ├── FileBrowser.tsx      # 全局文件浏览器 + 预览
-│       │   ├── CoordinatorBar.tsx   # 协调者状态栏
-│       │   ├── ChatPanel.tsx        # 智能体间消息界面
-│       │   ├── MessageBar.tsx       # 消息输入栏
-│       │   ├── MessageTimeline.tsx  # 消息总线消息流
-│       │   ├── SpawnMenu.tsx        # 智能体启动菜单
-│       │   ├── SettingsPanel.tsx    # 主题与设置面板
-│       │   ├── WorkspaceHeader.tsx  # 工作空间标题与控制栏
-│       │   ├── ProjectSidebar.tsx   # 项目文件夹选择侧边栏
-│       │   └── TopNav.tsx           # 导航 + 视图模式切换器
-│       ├── hooks/useSocket.ts   # 自动重连的 WebSocket
-│       ├── utils/agentStatus.ts # 智能体状态检测逻辑
-│       └── __tests__/           # 20 个前端测试
-├── .env.example                 # 新用户环境变量模板
-├── CHANGELOG.md                 # 发布历史
-├── VERSION                      # 当前版本（0.3.0）
-└── TODOS.md                     # 待办事项
+关键环境变量：
+
+| 变量 | 是否需要 | 用途 |
+| --- | --- | --- |
+| `ANTHROPIC_API_KEY` | 必填 | 传给 Claude Code agents，并复制给 Honcho 的 `LLM_ANTHROPIC_API_KEY` |
+| `LLM_GEMINI_API_KEY` 或 `LLM_OPENAI_API_KEY` | 推荐 | 语义召回使用的 embedding provider key |
+| `LLM_EMBEDDING_PROVIDER` | 推荐 | `gemini` 或 `openai` |
+| `COAGENT_MODE` | 可选 | 默认 `container`；设置为 `pty` 可使用 legacy host PTY mode |
+| `COAGENT_HOST_PROJECTS_ROOT` | 可选 | bind mount 到 orchestrator 和 agent containers 的宿主机项目目录 |
+| `COAGENT_HONCHO_DIR` | 可选 | 已存在的 Honcho checkout 路径 |
+
+## 运行模型
+
+默认是 container mode。`coagent-cli` 会启动 Docker Compose services，等待 PostgreSQL 和 Redis health checks，通过 `alembic upgrade head` 执行 Honcho migration，使用 host `uv` processes 启动 Honcho API 和 Deriver，并启动 containerized orchestrator 和 frontend。之后 orchestrator 会按需动态创建 agent containers。
+
+Legacy `pty` mode 仍可用于本地调试，但它不是默认运行模型。
+
+| 组件 | 运行位置 | 端口 | 职责 |
+| --- | --- | --- | --- |
+| Frontend | Docker container | `5173` | React UI 和 WebSocket client |
+| Orchestrator/backend | container mode 下为 Docker container | `3001` | HTTP/WebSocket API、sessions、routing、agents |
+| Agent runtime | 动态 Docker containers | 无 | Claude Code execution；每个 agent 一个 container |
+| Docker socket proxy | Docker container | internal | 为 orchestrator 提供受限 Docker API |
+| PostgreSQL | Docker container, `pgvector/pgvector:pg17` | `5432` | Honcho relational 和 vector storage |
+| Redis | Docker container, `redis:7-alpine` | `6379` | Honcho cache 和 lock coordination |
+| Honcho API | Host `uv` process | `8000` | Memory API |
+| Honcho Deriver | Host `uv` process | 无 | Derived semantic memory generation |
+
+## Agent 通信
+
+消息先进入 workspace files，再进入实时 UI 和 memory layer：
+
+```text
+coagent send
+  -> CoAgent_workspace/_shared/scratchpad.jsonl
+  -> ScratchpadWatcher
+  -> guardrail.ts
+  -> routingAcl.ts
+  -> messageRouting.ts
+  -> CoAgent_workspace/sessions/<agent>/inbox.jsonl
+  -> WebSocket UI update
+  -> AgentChannel / ContainerManager
+  -> Docker attach stream notification
+  -> Honcho memory
 ```
 
-## 工作原理
+这种设计使系统即使在 agent container 离线或重启时，仍然保留可审计的消息轨迹。
 
-### 智能体通信
+## 存储
 
-智能体通过共享的 `scratchpad.jsonl` 文件通信。当智能体运行 `coagent send --msg "完成"` 时，消息会：
+CoAgent 使用三层存储：
 
-1. 写入 `scratchpad.jsonl`（消息总线）
-2. 由后端路由到目标智能体的 `inbox.jsonl`
-3. 通过 WebSocket 广播到界面
-4. 记录到 Honcho 用于语义记忆
-5. 如果目标空闲，注入到其 PTY 终端
+| 层级 | 位置 | 用途 |
+| --- | --- | --- |
+| Workspace JSONL files | `CoAgent_workspace/` | operation log、inbox、artifact、usage、decision、memory handoff files |
+| PostgreSQL + pgvector | Docker volume `coagent_postgres_data` | Honcho sessions、peers、messages、embeddings、derived documents、vector search |
+| Redis | Docker volume `coagent_redis_data` | Honcho cache 和 lock coordination |
 
-### 记忆层级
+Workspace files 主要用于操作记录和审计。PostgreSQL 是语义记忆数据库。
 
-每个智能体拥有四层记忆，从最即时到最语义化：
+## 安全
 
-| 层级 | 来源 | 机制 | 范围 |
-|------|------|------|------|
-| **会话历史** | Claude `--resume` | 内置对话回放 | 当前会话 |
-| **Honcho 观察结论** | `honchoIntegration.ts` | 跨项目语义观察，启动时写入 `CLAUDE.md` | 所有项目 |
-| **近期上下文** | `notes.md` / `memory.md` | 最近 15 行以 `## Recent Context` 追加到 `CLAUDE.md` | 当前会话 |
-| **按需召回** | `coagent recall` | 通过 Honcho Dialectic API 语义搜索 | 所有项目 |
+当前安全控制覆盖 runtime、routing 和 CI：
 
-当 PTY 仍然存活时重连，无需注入上下文——Claude 已通过 `--resume` 拥有完整对话。当后端重启导致全新启动时，近期上下文会写入 `CLAUDE.md`，Claude 启动时自动读取。
+- `backend/src/guardrail.ts` 阻断常见 prompt injection 模式。
+- 结构化 PII 在 routing 和 memory recording 前被 redacted。
+- 写入 PTY/container notification 前会移除 terminal control characters。
+- `backend/src/routingAcl.ts` 限制高风险 message types。
+- Agent containers drop Linux capabilities，启用 `no-new-privileges`，并限制 CPU、memory 和 PID。
+- CI 运行 CodeQL、Gitleaks、AI security regression tests 和 dependency audit。
 
-### 记忆流水线
-
-```
-智能体发送消息
-    ↓
-Honcho API 记录消息
-    ↓
-推导器提取观察结论：
-  "worker-1 了解到 JWT 令牌应每 24 小时轮换"
-  "worker-1 认为 Redis 认证对生产环境至关重要"
-    ↓
-以向量形式存储在 PostgreSQL（pgvector）
-    ↓
-任何智能体都可查询：
-  coagent recall "我们对认证了解多少？"
-```
-
-### 终端状态
-
-| 状态 | 视觉效果 | 含义 |
-|------|----------|------|
-| 运行中 | 绿色光晕 | 智能体正在产生输出 |
-| 空闲 | 灰色边框 | 超过 1.5 秒无输出 |
-| 等待输入 | 红色脉冲 | 智能体需要你的输入（权限确认、y/n） |
-| 需要关注 | 红色实线 | 收到其他智能体的紧急消息 |
-| 已退出 | 半透明 | 终端进程已结束 |
-
-## 服务列表
-
-| 服务 | 端口 | 用途 |
-|------|------|------|
-| 前端 | 5173 | React 界面（Vite） |
-| 后端 | 3001 | WebSocket 服务器，PTY 管理 |
-| Honcho API | 8000 | 记忆 REST API |
-| 推导器 | — | 后台工人，提取观察结论 |
-| PostgreSQL | 5432 | 消息 + 向量存储（Docker） |
-| Redis | 6379 | 缓存（Docker） |
+这些控制用于降低风险，但不能替代人工 review。
 
 ## 开发
 
+安装依赖：
+
 ```bash
-# 运行测试
-cd backend && npm test
-cd frontend && npx vitest run
-
-# 类型检查
-cd backend && npx tsc --noEmit
-cd frontend && npx tsc --noEmit
-
-# 查看日志
-coagent logs
+npm install
+npm install -w backend
+npm install -w frontend
 ```
+
+使用 legacy PTY mode 在本地运行 backend 和 frontend：
+
+```bash
+COAGENT_MODE=pty HONCHO_BASE_URL=http://localhost:8000 HONCHO_API_KEY=local npm run dev
+```
+
+质量检查：
+
+```bash
+npm run typecheck -w backend
+npm run typecheck -w frontend
+npm run build -w backend
+npm run build -w frontend
+npm run test -w backend
+npm run test -w frontend
+```
+
+主要代码结构：
+
+```text
+backend/src/
+  agentChannel.ts        Runtime transport abstraction
+  containerManager.ts    Docker-backed per-agent runtime manager
+  ptyManager.ts          Legacy host PTY runtime manager
+  guardrail.ts           Prompt injection, PII, control-character checks
+  routingAcl.ts          Runtime ACL for high-risk message delivery
+  messageRouting.ts      Scratchpad-to-inbox routing and Honcho recording
+  scratchpadWatcher.ts   JSONL message bus watcher
+  artifactWatcher.ts     Artifact discovery and UI updates
+  honchoIntegration.ts   Memory recording and recall integration
+  usageLogger.ts         Usage and cost summaries
+
+frontend/src/
+  App.tsx                Main React application shell
+  components/            Terminal canvas、chat、artifacts、settings、views
+  hooks/useSocket.ts     WebSocket client with reconnect handling
+```
+
+## CI/CD
+
+GitHub Actions 会运行：
+
+- CodeQL SAST for JavaScript/TypeScript
+- Gitleaks secret scanning
+- Backend 和 frontend type checks
+- Backend 和 frontend builds
+- Vitest unit/integration tests
+- Guardrail 和 shell-injection regression tests
+- Critical npm dependency audit
+
+Tagged release 会校验 `VERSION`，运行 CI，从 `CHANGELOG.md` 提取 release notes，并发布 GitHub Release。
 
 ## 许可证
 

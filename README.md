@@ -2,23 +2,29 @@
 
 [中文文档](./README.zh-CN.md)
 
-**Multi-agent terminal canvas with semantic memory.**
-
-Orchestrate multiple Claude agents in parallel from a visual canvas. Each agent runs in its own terminal, communicates via a shared message bus, and builds long-term memory through Honcho — so knowledge from one project carries over to the next.
+CoAgent is a local-first multi-agent orchestration workspace for Claude Code. It provides a React terminal canvas, a TypeScript orchestrator, per-agent Docker runtime containers, file-backed agent coordination, guardrails, and Honcho semantic memory backed by PostgreSQL/pgvector and Redis.
 
 ## Highlights
 
-- **Visual multi-agent orchestration** — drag, resize, and manage multiple Claude terminals on an infinite canvas or structured grid
-- **Coordinator + worker architecture** — a coordinator dispatches tasks to worker agents, reviews their output, and synthesizes results
-- **Semantic memory via Honcho** — every agent interaction is processed into searchable observations; agents can recall knowledge across sessions and projects
-- **Cross-project knowledge transfer** — learnings from project A are automatically available in project B
-- **Real-time agent status** — green (working), grey (idle), pulsing red (needs your input) at a glance
-- **Built-in file browser** — search and preview all agent artifacts from a single panel
-- **One command startup** — `coagent` boots 6 services and opens the UI
+- Visual multi-agent workspace with overview, focus, terminal, chat, and artifact views.
+- Default sandbox mode: one Docker container per agent, managed by the orchestrator.
+- Agent communication through JSONL workspace files: `scratchpad.jsonl`, `inbox.jsonl`, `artifacts.jsonl`, and memory/audit records.
+- Routing layer with message guardrails, PII redaction, routing ACLs, and terminal-safe notification sanitisation.
+- Honcho integration for cross-session memory, semantic recall, and derived observations.
+- WebSocket observability for live terminal output, agent status, messages, artifacts, and usage/cost summaries.
+- CI gates for CodeQL SAST, Gitleaks, type checking, build validation, tests, AI security tests, and dependency audit.
 
 ## Quick Start
 
-Prerequisites: [Node.js](https://nodejs.org/) (v20–v24), [Docker Desktop](https://www.docker.com/products/docker-desktop/) (running), [Claude Code](https://claude.ai/code) (logged in)
+### Prerequisites
+
+- Node.js v20-v24
+- Docker Desktop or Docker Engine with Compose
+- Anthropic API key for Claude Code agents
+- Gemini or OpenAI API key for Honcho embeddings
+- macOS or Linux shell environment
+
+### Option A: Interactive setup
 
 ```bash
 git clone https://github.com/jinyy20021018-design/AI-CompanyOps.git
@@ -26,205 +32,208 @@ cd AI-CompanyOps
 ./bin/coagent-cli
 ```
 
-That's it. The interactive wizard will guide you through:
-1. Cloning the Honcho memory server (automatic)
-2. Detecting your Claude Code authentication
-3. Getting a free Gemini API key for embeddings
-4. Installing all dependencies (Node.js + Python)
-5. Starting all 6 services and opening the UI
+On first run, the CLI wizard checks prerequisites, configures API keys, clones Honcho as a sibling directory if needed, installs dependencies, starts the local stack, and opens the UI.
 
-To re-run the wizard: `./bin/coagent-cli setup`
+### Option B: Environment-file setup
 
-### Shortcut (optional)
+```bash
+cp .env.example .env
+# Fill ANTHROPIC_API_KEY and one embedding provider key.
+make start
+```
 
-After the first run, set up an alias so you can use `coagent` from anywhere:
+The UI is served at:
+
+```text
+http://localhost:5173
+```
+
+## Commands
+
+| Command | Purpose |
+| --- | --- |
+| `./bin/coagent-cli` | Start CoAgent, running setup first if needed |
+| `./bin/coagent-cli setup` | Re-run the first-time setup wizard |
+| `./bin/coagent-cli status` | Show service health |
+| `./bin/coagent-cli logs` | Tail local service logs |
+| `./bin/coagent-cli stop` | Stop services and remove orphan agent containers |
+| `./bin/coagent-cli restart` | Stop then start |
+| `./bin/coagent-cli open` | Open the UI |
+| `make start` | Bootstrap prerequisites, then start CoAgent |
+| `make start-container` | Start default container mode explicitly |
+| `make start-pty` | Start legacy host PTY mode |
+
+Optional alias:
 
 ```bash
 echo 'alias coagent="'$(pwd)'/bin/coagent-cli"' >> ~/.zshrc
 source ~/.zshrc
 ```
 
-## Commands
-
-All commands can be run as `./bin/coagent-cli <command>` or `coagent <command>` if you set up the alias.
-
-```
-./bin/coagent-cli              Start all services (default)
-./bin/coagent-cli stop         Stop all services
-./bin/coagent-cli status       Show service health
-./bin/coagent-cli restart      Stop then start
-./bin/coagent-cli logs         Tail all service logs
-./bin/coagent-cli open         Open the UI in browser
-./bin/coagent-cli setup        Re-run the setup wizard
-```
-
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                     Browser (React + Vite)                   │
-│  ┌──────────────────┐  ┌──────────────┐  ┌──────────────┐  │
-│  │ Overview Grid    │  │ Focus View   │  │ File Browser │  │
-│  │ (coordinator +   │  │ (full-screen │  │ (artifacts)  │  │
-│  │  agent cards)    │  │  terminal)   │  │              │  │
-│  └──────────────────┘  └──────────────┘  └──────────────┘  │
-└──────────────────────┬──────────────────────────────────────┘
-                       │ WebSocket
-┌──────────────────────▼──────────────────────────────────────┐
-│              Backend (Node.js + TypeScript)                   │
-│  ┌────────────┐  ┌──────────────┐  ┌─────────────────────┐  │
-│  │ PTY        │  │ Message      │  │ Honcho Integration  │  │
-│  │ Manager    │  │ Routing      │  │ (memory recording)  │  │
-│  └────────────┘  └──────────────┘  └──────────┬──────────┘  │
-│  ┌────────────┐  ┌──────────────┐             │              │
-│  │ Terminal   │  │ Session      │             │              │
-│  │ Registry   │  │ Lifecycle    │             │              │
-│  └────────────┘  └──────────────┘             │              │
-└───────────────────────────────────────────────┼──────────────┘
-                                                │ HTTP
-┌───────────────────────────────────────────────▼──────────────┐
-│                  Honcho Memory Server (Python)                │
-│  ┌─────────┐  ┌──────────┐  ┌─────────┐  ┌───────────────┐  │
-│  │ API     │  │ Deriver  │  │ Dreamer │  │ Dialectic     │  │
-│  │ (REST)  │  │ (observe)│  │ (merge) │  │ (query)       │  │
-│  └────┬────┘  └────┬─────┘  └────┬────┘  └───────────────┘  │
-│       │            │             │                            │
-│  ┌────▼────────────▼─────────────▼────┐  ┌────────────────┐  │
-│  │  PostgreSQL + pgvector             │  │  Redis (cache)  │  │
-│  │  (messages, observations, vectors) │  │                 │  │
-│  └────────────────────────────────────┘  └────────────────┘  │
-└──────────────────────────────────────────────────────────────┘
+CoAgent separates the agent runtime from the orchestration layer. Claude Code runs inside each agent container. CoAgent implements the surrounding system: container lifecycle, message routing, ACLs, guardrails, workspace files, artifact discovery, memory recording, audit files, and frontend observability.
+
+```mermaid
+flowchart LR
+  User["User"] --> Frontend["React frontend"]
+  Frontend <-->|WebSocket| Orchestrator["Backend / orchestrator"]
+
+  Orchestrator --> AgentChannel["AgentChannel"]
+  AgentChannel --> ContainerManager["ContainerManager"]
+  ContainerManager -->|Docker attach stdin/stdout| AgentA["Agent container: Claude Code"]
+  ContainerManager -->|Docker attach stdin/stdout| AgentB["Agent container: Claude Code"]
+
+  Orchestrator --> Scratchpad["_shared/scratchpad.jsonl"]
+  Scratchpad --> Watcher["ScratchpadWatcher"]
+  Watcher --> Guardrail["guardrail.ts"]
+  Guardrail --> ACL["routingAcl.ts"]
+  ACL --> Routing["messageRouting.ts"]
+  Routing --> Inbox["sessions/<agent>/inbox.jsonl"]
+  Routing --> Artifacts["_shared/artifacts.jsonl"]
+  Routing --> Honcho["Honcho API"]
+
+  Honcho --> Postgres[("PostgreSQL + pgvector")]
+  Honcho --> Redis[("Redis cache / locks")]
+  Deriver["Honcho Deriver"] --> Postgres
 ```
 
-## Project Structure
+## Configuration
 
-```
-├── bin/
-│   └── coagent-cli              # CLI — starts/stops all services
-├── backend/
-│   └── src/
-│       ├── index.ts             # HTTP + WebSocket server, handler dispatch
-│       ├── workspace.ts         # Workspace scaffolding (coagent CLI, templates)
-│       ├── sessionLifecycle.ts  # Session create/promote/demote/finalize
-│       ├── messageRouting.ts    # Scratchpad → inbox routing (single source)
-│       ├── honchoIntegration.ts # Honcho memory recording (spawn, exit, context)
-│       ├── honchoClient.ts      # Honcho SDK client wrapper
-│       ├── ptyManager.ts        # PTY spawn/kill/write with \r normalization
-│       ├── terminalRegistry.ts  # Persistent terminal state (JSON)
-│       ├── scratchpadWatcher.ts # File watcher for message bus
-│       ├── artifactWatcher.ts   # File watcher for agent outputs
-│       ├── serverContext.ts     # Shared type for all modules
-│       ├── protocol.ts          # WebSocket message types
-│       ├── usageLogger.ts       # Cost tracking per session
-│       └── __tests__/           # 5 test files (31+ backend tests)
-├── frontend/
-│   └── src/
-│       ├── App.tsx              # Main app — overview / focus / files view modes
-│       ├── components/
-│       │   ├── OverviewGrid.tsx     # Coordinator + agent card grid layout
-│       │   ├── FocusView.tsx        # Full-screen single-agent terminal view
-│       │   ├── TerminalCanvas.tsx   # Infinite pan/zoom canvas
-│       │   ├── TerminalWindow.tsx   # Draggable terminal window
-│       │   ├── TerminalPane.tsx     # xterm.js terminal emulator
-│       │   ├── AgentCard.tsx        # Structured mode agent card
-│       │   ├── AgentChip.tsx        # Compact agent status chip
-│       │   ├── ArtifactViewer.tsx   # Artifact preview panel
-│       │   ├── FileBrowser.tsx      # Global artifact browser + preview
-│       │   ├── CoordinatorBar.tsx   # Coordinator status strip
-│       │   ├── ChatPanel.tsx        # Inter-agent messaging UI
-│       │   ├── MessageBar.tsx       # Message input bar
-│       │   ├── MessageTimeline.tsx  # Scratchpad message feed
-│       │   ├── SpawnMenu.tsx        # Agent spawn menu
-│       │   ├── SettingsPanel.tsx    # Theme and settings panel
-│       │   ├── WorkspaceHeader.tsx  # Workspace title and controls
-│       │   ├── ProjectSidebar.tsx   # Project folder selector sidebar
-│       │   └── TopNav.tsx           # Navigation + view mode switcher
-│       ├── hooks/useSocket.ts   # WebSocket with auto-reconnect
-│       ├── utils/agentStatus.ts # Agent state detection
-│       └── __tests__/           # 20 frontend tests
-├── .env.example                 # Environment template for new users
-├── CHANGELOG.md                 # Release history
-├── VERSION                      # Current version (0.3.0)
-└── TODOS.md                     # Prioritized backlog
+Important environment variables:
+
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `ANTHROPIC_API_KEY` | yes | Passed to Claude Code agents and copied into Honcho as `LLM_ANTHROPIC_API_KEY` |
+| `LLM_GEMINI_API_KEY` or `LLM_OPENAI_API_KEY` | recommended | Embedding provider key for semantic recall |
+| `LLM_EMBEDDING_PROVIDER` | recommended | `gemini` or `openai` |
+| `COAGENT_MODE` | optional | `container` by default; set `pty` for legacy host PTY mode |
+| `COAGENT_HOST_PROJECTS_ROOT` | optional | Host projects directory bind-mounted into orchestrator and agent containers |
+| `COAGENT_HONCHO_DIR` | optional | Path to an existing Honcho checkout |
+
+## Runtime Model
+
+Container mode is the default. `coagent-cli` starts Docker Compose services, waits for PostgreSQL and Redis health checks, runs Honcho migrations, starts Honcho API and Deriver as host `uv` processes, and starts the containerized orchestrator and frontend. The orchestrator then creates one Docker container per agent on demand.
+
+Legacy `pty` mode is still available for local debugging, but it is not the default runtime model.
+
+| Component | Runtime | Port | Responsibility |
+| --- | --- | --- | --- |
+| Frontend | Docker container | `5173` | React UI and WebSocket client |
+| Orchestrator/backend | Docker container in container mode | `3001` | HTTP/WebSocket API, sessions, routing, agents |
+| Agent runtime | Dynamic Docker containers | none | Claude Code execution, one container per agent |
+| Docker socket proxy | Docker container | internal | Restricted Docker API access for the orchestrator |
+| PostgreSQL | Docker container, `pgvector/pgvector:pg17` | `5432` | Honcho relational and vector storage |
+| Redis | Docker container, `redis:7-alpine` | `6379` | Honcho cache and lock support |
+| Honcho API | Host `uv` process | `8000` | Memory API |
+| Honcho Deriver | Host `uv` process | none | Derived semantic memory generation |
+
+## Agent Communication
+
+Messages flow through workspace files first, then into the live UI and memory layer:
+
+```text
+coagent send
+  -> CoAgent_workspace/_shared/scratchpad.jsonl
+  -> ScratchpadWatcher
+  -> guardrail.ts
+  -> routingAcl.ts
+  -> messageRouting.ts
+  -> CoAgent_workspace/sessions/<agent>/inbox.jsonl
+  -> WebSocket UI update
+  -> AgentChannel / ContainerManager
+  -> Docker attach stream notification
+  -> Honcho memory
 ```
 
-## How It Works
+This design gives the system an auditable message trail even when an agent container is offline or restarted.
 
-### Agent Communication
+## Storage
 
-Agents communicate through a shared `scratchpad.jsonl` file. When an agent runs `coagent send --msg "done"`, the message is:
+CoAgent uses three storage layers:
 
-1. Written to `scratchpad.jsonl` (the message bus)
-2. Routed to the target agent's `inbox.jsonl` by the backend
-3. Broadcast to the UI via WebSocket
-4. Recorded to Honcho for semantic memory
-5. Injected into the target's PTY if they're idle
+| Layer | Location | Purpose |
+| --- | --- | --- |
+| Workspace JSONL files | `CoAgent_workspace/` | Operational log, inboxes, artifacts, usage, decisions, and memory handoff files |
+| PostgreSQL + pgvector | Docker volume `coagent_postgres_data` | Honcho sessions, peers, messages, embeddings, derived documents, and vector search |
+| Redis | Docker volume `coagent_redis_data` | Honcho cache and lock coordination |
 
-### Memory Layers
+Workspace files are operational and audit-oriented. PostgreSQL is the semantic memory database.
 
-Each agent has four layers of memory, from most immediate to most semantic:
+## Security
 
-| Layer | Source | Mechanism | Scope |
-|-------|--------|-----------|-------|
-| **Session history** | Claude `--resume` | Built-in conversation replay | Current session |
-| **Honcho observations** | `honchoIntegration.ts` | Cross-project semantic observations written to `CLAUDE.md` on spawn | All projects |
-| **Recent context** | `notes.md` / `memory.md` | Last 15 lines appended to `CLAUDE.md` as `## Recent Context` on fresh spawn | Current session |
-| **On-demand recall** | `coagent recall` | Semantic search via Honcho Dialectic API | All projects |
+Security controls are implemented across runtime, routing, and CI:
 
-On reconnect when the PTY is still alive, no context injection is needed — Claude already has the full conversation via `--resume`. On fresh spawn (backend restart), recent context is written to `CLAUDE.md` so Claude picks it up at startup.
+- Prompt injection patterns are blocked by `backend/src/guardrail.ts`.
+- Structured PII is redacted before routing and memory recording.
+- Terminal control characters are stripped before PTY/container notification writes.
+- High-risk message types are restricted by `backend/src/routingAcl.ts`.
+- Agent containers drop Linux capabilities, use `no-new-privileges`, and enforce CPU, memory, and PID limits.
+- CI runs CodeQL, Gitleaks, AI security regression tests, and dependency audit.
 
-### Memory Pipeline
-
-```
-Agent sends message
-    ↓
-Honcho API records it
-    ↓
-Deriver extracts observations:
-  "worker-1 learned JWT tokens should rotate every 24h"
-  "worker-1 considers Redis auth critical for production"
-    ↓
-Stored as vectors in PostgreSQL (pgvector)
-    ↓
-Any agent can query:
-  coagent recall "what do we know about auth?"
-```
-
-### Terminal States
-
-| State | Visual | Meaning |
-|-------|--------|---------|
-| Running | Green glow | Agent is actively producing output |
-| Idle | Grey border | No output for 1.5+ seconds |
-| Waiting | Pulsing red | Agent needs your input (permission prompt, y/n) |
-| Attention | Solid red | Urgent message from another agent |
-| Exited | Dimmed | Terminal process ended |
-
-## Services
-
-| Service | Port | Purpose |
-|---------|------|---------|
-| Frontend | 5173 | React UI (Vite) |
-| Backend | 3001 | WebSocket server, PTY management |
-| Honcho API | 8000 | Memory REST API |
-| Deriver | — | Background worker, extracts observations |
-| PostgreSQL | 5432 | Message + vector storage (Docker) |
-| Redis | 6379 | Cache (Docker) |
+These controls reduce risk; they do not remove the need for human review of agent output.
 
 ## Development
 
+Install dependencies:
+
 ```bash
-# Run tests
-cd backend && npm test
-cd frontend && npx vitest run
-
-# Type check
-cd backend && npx tsc --noEmit
-cd frontend && npx tsc --noEmit
-
-# View logs
-coagent logs
+npm install
+npm install -w backend
+npm install -w frontend
 ```
+
+Run backend and frontend locally in legacy PTY mode:
+
+```bash
+COAGENT_MODE=pty HONCHO_BASE_URL=http://localhost:8000 HONCHO_API_KEY=local npm run dev
+```
+
+Quality checks:
+
+```bash
+npm run typecheck -w backend
+npm run typecheck -w frontend
+npm run build -w backend
+npm run build -w frontend
+npm run test -w backend
+npm run test -w frontend
+```
+
+Main source layout:
+
+```text
+backend/src/
+  agentChannel.ts        Runtime transport abstraction
+  containerManager.ts    Docker-backed per-agent runtime manager
+  ptyManager.ts          Legacy host PTY runtime manager
+  guardrail.ts           Prompt injection, PII, and control-character checks
+  routingAcl.ts          Runtime ACL for high-risk message delivery
+  messageRouting.ts      Scratchpad-to-inbox routing and Honcho recording
+  scratchpadWatcher.ts   JSONL message bus watcher
+  artifactWatcher.ts     Artifact discovery and UI updates
+  honchoIntegration.ts   Memory recording and recall integration
+  usageLogger.ts         Usage and cost summaries
+
+frontend/src/
+  App.tsx                Main React application shell
+  components/            Terminal canvas, chat, artifacts, settings, views
+  hooks/useSocket.ts     WebSocket client with reconnect handling
+```
+
+## CI/CD
+
+GitHub Actions runs:
+
+- CodeQL SAST for JavaScript/TypeScript
+- Gitleaks secret scanning
+- Backend and frontend type checks
+- Backend and frontend builds
+- Vitest unit/integration tests
+- Guardrail and shell-injection regression tests
+- Critical npm dependency audit
+
+Tagged releases validate `VERSION`, run CI, extract `CHANGELOG.md`, and publish a GitHub Release.
 
 ## License
 
