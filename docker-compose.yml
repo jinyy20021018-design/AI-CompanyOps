@@ -1,11 +1,11 @@
 # CoAgent — root docker-compose
 #
-# Two modes, gated by COAGENT_MODE on the orchestrator service:
-#   - pty       (default, Phase A/B): backend runs on host; this compose only
-#                 brings up postgres/redis/frontend. honcho-api/deriver native.
-#   - container (Phase C+):           orchestrator + docker-socket-proxy are
+# Two modes, gated by COAGENT_MODE in the launcher:
+#   - container (default via coagent-cli): orchestrator + docker-socket-proxy are
 #                 containerized; agents are Docker containers spawned dynamically
 #                 by the orchestrator's ContainerManager.
+#   - pty:                            backend runs on host; compose only
+#                 brings up postgres/redis/frontend. honcho-api/deriver native.
 #
 # Profiles let `docker compose up` (no profile flag) bring up only the always-on
 # services; the container-mode services are gated behind `--profile container`.
@@ -113,7 +113,7 @@ services:
     container_name: coagent-orchestrator-1
     environment:
       COAGENT_MODE: container
-      COAGENT_AGENT_IMAGE: coagent/agent:claude
+      COAGENT_AGENT_IMAGE: ${COAGENT_AGENT_IMAGE:-coagent/agent:claude}
       DOCKER_HOST: tcp://docker-proxy:2375
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:?set ANTHROPIC_API_KEY in your shell or .env}
       COAGENT_PROJECTS_ROOT: /projects
@@ -126,6 +126,7 @@ services:
       COAGENT_AGENT_CPUS: "1"
       COAGENT_AGENT_MEMORY_MB: "1024"
       HONCHO_BASE_URL: http://host.docker.internal:8000
+      HONCHO_API_KEY: local
     volumes:
       # Read-only mount of the host's ~/.claude (for usageParser only).
       - ${HOME}/.claude:/host-claude:ro

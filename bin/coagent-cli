@@ -438,6 +438,20 @@ export_compose_defaults() {
   export COAGENT_DEFAULT_PROJECT_PATH="${COAGENT_DEFAULT_PROJECT_PATH:-${COAGENT_PROJECTS_ROOT}/$(basename "$CLI_DIR")}"
 }
 
+ensure_agent_image() {
+  local image="${COAGENT_AGENT_IMAGE:-coagent/agent:claude}"
+
+  if docker image inspect "$image" >/dev/null 2>&1; then
+    ok "Agent image: $image"
+    return
+  fi
+
+  log "Building agent image: $image"
+  docker build -t "$image" -f "$CLI_DIR/agent/Dockerfile" "$CLI_DIR/agent" >/tmp/coagent-agent-image-build.log 2>&1 \
+    || { fail "Agent image build failed. Tail of /tmp/coagent-agent-image-build.log:"; tail -40 /tmp/coagent-agent-image-build.log >&2; exit 1; }
+  ok "Agent image: $image"
+}
+
 kill_local_port_listener() {
   local port="$1"
   local pid comm
@@ -489,6 +503,7 @@ do_start_services() {
   compose_log=$(mktemp)
   if [ "$coagent_mode" = "container" ]; then
     export_compose_defaults
+    ensure_agent_image
     docker compose -f docker-compose.yml --profile container up -d --build > "$compose_log" 2>&1
   else
     docker compose -f docker-compose.yml up -d postgres redis > "$compose_log" 2>&1

@@ -408,11 +408,11 @@ recall)
   done
   QUERY="\${QUERY:-project knowledge}"
   ENCODED=$(printf '%s' "$QUERY" | python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.stdin.read().strip()))")
-  FOLDER_PATH="$(dirname $(dirname $SHARED_DIR))"
+  FOLDER_PATH="$(dirname "$(dirname "$SHARED_DIR")")"
   if [[ -n "$PEER" ]]; then
     curl -s "\${COAGENT_ORCHESTRATOR_URL:-http://localhost:3001}/honcho/context?peer=\${PEER}&query=\${ENCODED}"
   else
-    SESSION_ID="project-$(printf '%s' "$FOLDER_PATH" | sed 's/[\/\s.]/-/g')"
+    SESSION_ID="project-$(printf '%s' "$FOLDER_PATH" | python3 -c "import re,sys; print(re.sub(r'[/\\s.]', '-', sys.stdin.read()))")"
     curl -s "\${COAGENT_ORCHESTRATOR_URL:-http://localhost:3001}/honcho/context?session=\${SESSION_ID}&query=\${ENCODED}"
   fi
   ;;
@@ -431,11 +431,12 @@ spawn)
     echo "Usage: coagent spawn --title \\"Worker name\\" --task \\"Detailed instructions\\"" >&2; exit 1
   fi
   FOLDER_PATH="\${COAGENT_FOLDER_PATH:?COAGENT_FOLDER_PATH not set}"
+  ESCAPED_FOLDER="$(printf '%s' "$FOLDER_PATH" | python3 -c "import sys,json; print(json.dumps(sys.stdin.read()))")"
   ESCAPED_TITLE="$(printf '%s' "$TITLE" | python3 -c "import sys,json; print(json.dumps(sys.stdin.read()))")"
   ESCAPED_TASK="$(printf '%s' "$TASK" | python3 -c "import sys,json; print(json.dumps(sys.stdin.read()))")"
   RESULT=$(curl -s -X POST "\${COAGENT_ORCHESTRATOR_URL:-http://localhost:3001}/spawn" \\
     -H "Content-Type: application/json" \\
-    -d "{\\"folderPath\\":\\"\${FOLDER_PATH}\\",\\"title\\":\${ESCAPED_TITLE},\\"task\\":\${ESCAPED_TASK}}")
+    -d "{\\"folderPath\\":\${ESCAPED_FOLDER},\\"title\\":\${ESCAPED_TITLE},\\"task\\":\${ESCAPED_TASK}}")
   # Print a clean line the coordinator can capture: sessionName=<name>
   SESSION=$(printf '%s' "$RESULT" | python3 -c "import sys,json; r=json.loads(sys.stdin.read()); print(r.get('sessionName',''))" 2>/dev/null)
   if [[ -n "$SESSION" ]]; then
