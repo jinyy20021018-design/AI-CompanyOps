@@ -47,7 +47,9 @@ function estimateCost(
 
 // ── Path helpers ────────────────────────────────────────────────────────────
 
-const CLAUDE_DIR = path.join(os.homedir(), ".claude");
+// COAGENT_CLAUDE_HOME lets the orchestrator container point at the host's
+// ~/.claude (mounted read-only) instead of the container user's home dir.
+const CLAUDE_DIR = process.env.COAGENT_CLAUDE_HOME ?? path.join(os.homedir(), ".claude");
 const CLAUDE_PROJECTS_DIR = path.join(CLAUDE_DIR, "projects");
 const CLAUDE_SESSIONS_DIR = path.join(CLAUDE_DIR, "sessions");
 

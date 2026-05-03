@@ -1,6 +1,7 @@
 import * as pty from "node-pty";
 import crypto from "node:crypto";
 import fs from "node:fs";
+import type { AgentChannel, AgentDataListener, AgentExitListener, AgentWriteOptions } from "./agentChannel.js";
 
 export interface PtySession {
   id: string;
@@ -20,7 +21,7 @@ export interface PtySession {
 
 const RING_BUFFER_SIZE = 500;
 
-export class PtyManager {
+export class PtyManager implements AgentChannel {
   private sessions: Map<string, PtySession> = new Map();
 
   create(
@@ -157,10 +158,10 @@ export class PtyManager {
     return this.sessions.get(id)?.lastOutputTime ?? 0;
   }
 
-  write(id: string, data: string): void {
-    // Skip normalization for raw user input (single chars, control sequences)
-    // Only normalize programmatic writes that look like complete messages
-    if (data.length > 1 && !data.includes("\x1b")) {
+  write(id: string, data: string, options: AgentWriteOptions = {}): void {
+    // Raw terminal input must be passed through unchanged. IMEs can commit
+    // multiple characters at once, so length alone cannot identify commands.
+    if (!options.raw && data.length > 1 && !data.includes("\x1b")) {
       // Replace all internal \n with \r (PTY needs carriage return, not newline)
       data = data.replace(/\n/g, "\r");
       // Ensure it ends with \r so the input is always submitted
@@ -175,6 +176,22 @@ export class PtyManager {
 
   resize(id: string, cols: number, rows: number): void {
     this.sessions.get(id)?.process.resize(cols, rows);
+  }
+
+  getPid(id: string): number | undefined {
+    return this.sessions.get(id)?.pid;
+  }
+
+  /**
+   * Subscribe a one-shot listener to a session's data stream. Returns a disposer.
+   * Used for transient watchers (e.g., "No conversation found" detection on `claude --resume`)
+   * without exposing the underlying IPty handle.
+   */
+  subscribeData(id: string, listener: (data: string) => void): () => void {
+    const session = this.sessions.get(id);
+    if (!session) return () => {};
+    const disposable = session.process.onData((data: string) => listener(data));
+    return () => disposable.dispose();
   }
 
   kill(id: string): void {

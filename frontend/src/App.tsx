@@ -13,6 +13,7 @@ import { PresentationPage } from "./components/PresentationPage";
 
 const COORD_WIDTH = 500;
 const COORD_HEIGHT = 320;
+const CLAUDE_PERMISSION_ARGS = "--allowedTools Bash,Read,Edit,Write --permission-mode dontAsk";
 
 const DEPARTMENTS = [
   { id: "product",     title: "Product" },
@@ -78,11 +79,15 @@ export default function App() {
   // Spawn coordinator helper
   const spawnCoordinator = useCallback((pathId: string) => {
     const engine = coordinatorEngineRef.current;
-    const toolRestriction = engine === "claude" ? " --allowedTools Bash,Read --dangerously-skip-permissions" : "";
+    const claudeMode = engine === "claude" ? ` ${CLAUDE_PERMISSION_ARGS}` : "";
     if (coordinatorHasExistedRef.current.has(pathId)) {
-      pendingCommandRef.current = `${engine} --model sonnet${toolRestriction} --resume coordinator`;
+      pendingCommandRef.current = engine === "claude"
+        ? `coagent-claude --model sonnet${claudeMode} --resume coordinator`
+        : `${engine} --model sonnet --resume coordinator`;
     } else {
-      pendingCommandRef.current = `${engine} --model sonnet${toolRestriction} -n coordinator`;
+      pendingCommandRef.current = engine === "claude"
+        ? `coagent-claude --model sonnet${claudeMode} -n coordinator`
+        : `${engine} --model sonnet -n coordinator`;
       coordinatorHasExistedRef.current.add(pathId);
     }
     console.log("[CoAgent] Sending terminal:create for coordinator", pathId);
@@ -159,7 +164,7 @@ export default function App() {
               title = "CEO";
             } else {
               const provider = entry.provider ?? "claude";
-              const key = `${entry.pathId}:${provider}`;
+              const key = `${msg.pathId}:${provider}`;
               let count = (counterRef.current[key] ?? 0) + 1;
               let candidate = `${provider}-${count}`;
               while (usedTitles.has(candidate)) { count++; candidate = `${provider}-${count}`; }
@@ -169,7 +174,7 @@ export default function App() {
             }
             return {
             id: entry.terminalId,
-            pathId: entry.pathId,
+            pathId: msg.pathId,
             title,
             tag: entry.role === "coordinator" ? "coordinator" : entry.tag,
             sessionName: entry.sessionName,
@@ -253,7 +258,7 @@ export default function App() {
             cmd = pendingCommandRef.current;
             pendingCommandRef.current = null;
           } else if (!isCoordinator && !msg.autoStarted) {
-            cmd = msg.provider === "codex" ? "codex" : "claude --model haiku --dangerously-skip-permissions";
+            cmd = msg.provider === "codex" ? "codex" : `coagent-claude --model haiku ${CLAUDE_PERMISSION_ARGS}`;
           }
           if (cmd) {
             setTimeout(() => {
@@ -570,9 +575,17 @@ export default function App() {
       const data = await res.json();
       if (data.path) {
         send({ type: "folder:add", path: data.path });
+      } else if (data.manual) {
+        const manualPath = window.prompt(data.message ?? "Enter project folder path", data.suggestedPath ?? "/projects");
+        if (manualPath?.trim()) {
+          send({ type: "folder:add", path: manualPath.trim() });
+        }
+      } else if (!data.cancelled) {
+        setFolderError("Could not open folder picker");
       }
-    } catch {
-      // silently ignore
+    } catch (err) {
+      setFolderError(err instanceof Error ? err.message : "Could not open folder picker");
+      setTimeout(() => setFolderError(null), 4000);
     } finally {
       pickerOpenRef.current = false;
     }

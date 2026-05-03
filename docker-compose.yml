@@ -1,0 +1,154 @@
+# CoAgent — root docker-compose
+#
+# Two modes, gated by COAGENT_MODE in the launcher:
+#   - container (default via coagent-cli): orchestrator + docker-socket-proxy are
+#                 containerized; agents are Docker containers spawned dynamically
+#                 by the orchestrator's ContainerManager.
+#   - pty:                            backend runs on host; compose only
+#                 brings up postgres/redis/frontend. honcho-api/deriver native.
+#
+# Profiles let `docker compose up` (no profile flag) bring up only the always-on
+# services; the container-mode services are gated behind `--profile container`.
+#
+# Auth: ANTHROPIC_API_KEY is passed through to the orchestrator and propagated
+# to each spawned agent container. There is no OAuth/keychain plumbing.
+
+networks:
+  coagent_net:
+    name: coagent_net
+    driver: bridge
+
+volumes:
+  coagent_postgres_data:
+  coagent_redis_data:
+  coagent_orch_state:        # orchestrator persistent state (terminal-registry, folders, etc.)
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    container_name: coagent-database-1
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - coagent_postgres_data:/var/lib/postgresql/data
+    networks: [coagent_net]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: coagent-redis-1
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - coagent_redis_data:/data
+    networks: [coagent_net]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: coagent-frontend-1
+    ports:
+      - "5173:80"
+    networks: [coagent_net]
+    environment:
+      BACKEND_HOST: host.docker.internal
+      BACKEND_PORT: "3001"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # ── container-mode services (Phase C+) ─────────────────────────────────────
+  # Bring these up with: docker compose --profile container up -d
+
+  docker-proxy:
+    profiles: [container]
+    image: tecnativa/docker-socket-proxy:latest
+    container_name: coagent-docker-proxy-1
+    environment:
+      # Allow exactly the endpoints ContainerManager needs.
+      CONTAINERS: 1
+      EXEC: 1
+      POST: 1
+      START: 1
+      STOP: 1
+      DELETE: 1
+      VOLUMES: 1
+      NETWORKS: 1
+      IMAGES: 1
+      INFO: 1
+      VERSION: 1
+      # Default-deny for everything else (BUILD, SWARM, PRIVILEGED, etc.)
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks: [coagent_net]
+    restart: unless-stopped
+
+  orchestrator:
+    profiles: [container]
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: coagent-orchestrator-1
+    environment:
+      COAGENT_MODE: container
+      COAGENT_AGENT_IMAGE: ${COAGENT_AGENT_IMAGE:-coagent/agent:claude}
+      DOCKER_HOST: tcp://docker-proxy:2375
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:?set ANTHROPIC_API_KEY in your shell or .env}
+      COAGENT_PROJECTS_ROOT: /projects
+      COAGENT_HOST_PROJECTS_ROOT: ${COAGENT_HOST_PROJECTS_ROOT:?set COAGENT_HOST_PROJECTS_ROOT to your host projects dir}
+      COAGENT_DEFAULT_PROJECT_PATH: ${COAGENT_DEFAULT_PROJECT_PATH:-/projects}
+      COAGENT_STATE_DIR: /orch-state
+      COAGENT_ORCHESTRATOR_URL: http://orchestrator:3001
+      COAGENT_CLAUDE_HOME: /host-claude
+      COAGENT_FS_POLLING: "1"
+      COAGENT_AGENT_CPUS: "1"
+      COAGENT_AGENT_MEMORY_MB: "1024"
+      HONCHO_BASE_URL: http://host.docker.internal:8000
+      HONCHO_API_KEY: local
+    volumes:
+      # Read-only mount of the host's ~/.claude (for usageParser only).
+      - ${HOME}/.claude:/host-claude:ro
+      # Bind-mount the host's projects root so the orchestrator can scaffold and
+      # see workspaces. Agents see the SAME host root at the SAME /projects path.
+      - ${COAGENT_HOST_PROJECTS_ROOT}:/projects
+      # Persistent orchestrator state (folders.json, etc.).
+      - coagent_orch_state:/orch-state
+    ports:
+      - "3001:3001"
+    networks: [coagent_net]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      docker-proxy:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3001/health', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped

@@ -50,7 +50,7 @@ function makeRouter(opts: {
 
   const ctx = {
     terminalRegistry: { load: () => entries },
-    ptyManager: {
+    agentChannel: {
       has: () => false,
       getLastOutputTime: () => 0,
       write: () => {},

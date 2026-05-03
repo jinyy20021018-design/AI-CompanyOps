@@ -3,16 +3,17 @@ import path from "node:path";
 import crypto from "node:crypto";
 import type { FolderEntry } from "./protocol.js";
 
-const DATA_FILE = path.resolve(
-  import.meta.dirname ?? path.dirname(new URL(import.meta.url).pathname),
-  "../../folders.json"
-);
+const DEFAULT_STATE_DIR = (process.env.COAGENT_MODE ?? "container") === "container" && fs.existsSync("/orch-state")
+  ? "/orch-state"
+  : path.resolve(import.meta.dirname ?? path.dirname(new URL(import.meta.url).pathname), "../../");
+const DATA_FILE = path.join(process.env.COAGENT_STATE_DIR ?? DEFAULT_STATE_DIR, "folders.json");
 
 export class FolderRegistry {
   private folders: Map<string, FolderEntry> = new Map();
 
   constructor() {
     this.load();
+    this.ensureDefaultFolder();
   }
 
   private load(): void {
@@ -31,7 +32,29 @@ export class FolderRegistry {
 
   private save(): void {
     const entries = Array.from(this.folders.values());
+    fs.mkdirSync(path.dirname(DATA_FILE), { recursive: true });
     fs.writeFileSync(DATA_FILE, JSON.stringify(entries, null, 2), "utf-8");
+  }
+
+  private ensureDefaultFolder(): void {
+    if (this.folders.size > 0) return;
+    const defaultPath = process.env.COAGENT_DEFAULT_PROJECT_PATH;
+    if (!defaultPath) return;
+
+    const resolved = path.resolve(defaultPath);
+    try {
+      if (!fs.existsSync(resolved) || !fs.statSync(resolved).isDirectory()) return;
+      const id = `default-${crypto.createHash("sha256").update(resolved).digest("hex").slice(0, 12)}`;
+      this.folders.set(id, {
+        id,
+        label: path.basename(resolved),
+        path: resolved,
+        defaultProvider: "claude",
+      });
+      this.save();
+    } catch {
+      // Default folder is a convenience; an unavailable path should not block startup.
+    }
   }
 
   add(folderPath: string): FolderEntry {

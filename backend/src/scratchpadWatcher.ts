@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import chokidar from "chokidar";
 
 export type ScratchpadMessage = {
   ts: string;
@@ -15,12 +16,26 @@ export type ScratchpadMessage = {
   artifactPath?: string;
 };
 
+// Cross-cutting: abstract over fs.FSWatcher (native) and chokidar.FSWatcher
+// (polling). chokidar's close() is async; fs.FSWatcher's is sync. Caller does
+// not await — losing the close-completion signal is acceptable.
+interface CloseableWatcher {
+  close(): void | Promise<void>;
+}
+
 type WatchState = {
-  watcher: fs.FSWatcher;
+  watcher: CloseableWatcher;
   lastSize: number;
   buffer: string;
   debounceTimer: ReturnType<typeof setTimeout> | null;
 };
+
+/**
+ * Polling is required when the watched file lives on a Docker Desktop bind mount
+ * (macOS osxfs/gRPC-FUSE drops inotify events under load). Container mode opts in
+ * via env; legacy host-mode keeps native fs.watch.
+ */
+const USE_POLLING = process.env.COAGENT_FS_POLLING === "1";
 
 function isValidMessage(obj: unknown): obj is ScratchpadMessage {
   if (typeof obj !== "object" || obj === null) return false;
@@ -49,7 +64,7 @@ export class ScratchpadWatcher {
 
     const stat = fs.statSync(filePath);
     const state: WatchState = {
-      watcher: null as unknown as fs.FSWatcher,
+      watcher: null as unknown as CloseableWatcher,
       lastSize: stat.size,
       buffer: "",
       debounceTimer: null,
@@ -95,11 +110,23 @@ export class ScratchpadWatcher {
       state.debounceTimer = setTimeout(readNew, 100);
     };
 
-    state.watcher = fs.watch(filePath, (eventType) => {
-      if (eventType === "change") {
-        debouncedRead();
-      }
-    });
+    if (USE_POLLING) {
+      const watcher = chokidar.watch(filePath, {
+        usePolling: true,
+        interval: 250,
+        awaitWriteFinish: { stabilityThreshold: 50, pollInterval: 25 },
+        ignoreInitial: true,
+      });
+      watcher.on("change", debouncedRead);
+      watcher.on("add", debouncedRead);
+      state.watcher = watcher;
+    } else {
+      state.watcher = fs.watch(filePath, (eventType) => {
+        if (eventType === "change") {
+          debouncedRead();
+        }
+      });
+    }
 
     this.watched.set(sharedDir, state);
   }

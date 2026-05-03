@@ -1,4 +1,5 @@
 node_modules/
+CoAgent_workspace/
 dist/
 build/
 folders.json

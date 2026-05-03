@@ -1,6 +1,6 @@
 import { WebSocket, WebSocketServer } from "ws";
 import { FolderRegistry } from "./folderRegistry.js";
-import { PtyManager } from "./ptyManager.js";
+import type { AgentChannel } from "./agentChannel.js";
 import { TerminalRegistry } from "./terminalRegistry.js";
 import { ScratchpadWatcher, type ScratchpadMessage } from "./scratchpadWatcher.js";
 import { ArtifactWatcher } from "./artifactWatcher.js";
@@ -10,7 +10,7 @@ export type SessionMeta = { folderPath: string; sessionName: string; sessionDir:
 
 export interface ServerContext {
   registry: FolderRegistry;
-  ptyManager: PtyManager;
+  agentChannel: AgentChannel;
   terminalRegistry: TerminalRegistry;
   scratchpadWatcher: ScratchpadWatcher;
   artifactWatcher: ArtifactWatcher;
