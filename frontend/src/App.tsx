@@ -254,12 +254,13 @@ export default function App() {
 
           // Auto-input command
           let cmd: string | null = null;
-          if (isCoordinator && pendingCommandRef.current) {
+          if (isCoordinator && pendingCommandRef.current && !msg.autoStarted) {
             cmd = pendingCommandRef.current;
             pendingCommandRef.current = null;
           } else if (!isCoordinator && !msg.autoStarted) {
             cmd = msg.provider === "codex" ? "codex" : `coagent-claude --model haiku ${CLAUDE_PERMISSION_ARGS}`;
           }
+          if (msg.autoStarted) pendingCommandRef.current = null;
           if (cmd) {
             setTimeout(() => {
               send({ type: "terminal:input", terminalId: msg.terminalId, data: cmd + "\r" });

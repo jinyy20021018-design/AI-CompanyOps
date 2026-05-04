@@ -30,6 +30,7 @@ import { recordSpawnEvent, recordExitEvent, injectCoordinatorContext } from "./h
 const PORT = 3001;
 const CLAUDE_PERMISSION_ARGS = "--allowedTools Bash,Read,Edit,Write --permission-mode dontAsk";
 const CLAUDE_HAIKU_CMD = `coagent-claude --model haiku ${CLAUDE_PERMISSION_ARGS}`;
+const CLAUDE_SONNET_CMD = `coagent-claude --model sonnet ${CLAUDE_PERMISSION_ARGS}`;
 const registry = new FolderRegistry();
 
 // AgentChannel: pluggable agent transport.
@@ -841,6 +842,12 @@ wss.on("connection", (ws: WebSocket) => {
           watchedDirCounts.set(sharedDir, count + 1);
 
           console.log("[Backend] Sending terminal:created", session.id, sessionType);
+          const autoStartCommand = provider === "codex"
+            ? "codex"
+            : sessionType === "coordinator"
+              ? `${CLAUDE_SONNET_CMD} -n coordinator`
+              : CLAUDE_HAIKU_CMD;
+
           send(ws, {
             type: "terminal:created",
             terminalId: session.id,
@@ -852,11 +859,16 @@ wss.on("connection", (ws: WebSocket) => {
             tag,
             mode,
             provider,
+            autoStarted: true,
             ...(msg.title ? { title: msg.title } : {}),
           });
 
           // Start watching session artifacts directory
           artifactWatcher.watch(path.join(sessionDir, "artifacts"), makeArtifactCallback(session.id, (m) => send(ws, m)));
+
+          setTimeout(() => {
+            agentChannel.write(session.id, `${autoStartCommand}\r`);
+          }, 1000);
 
           // Watch for the new Claude session UUID and persist it for future resume
           if (provider === "claude") {
@@ -1486,7 +1498,7 @@ process.on("SIGINT", async () => {
   process.exit(0);
 });
 
-server.listen(PORT, () => {
+server.listen(PORT, "0.0.0.0", () => {
   console.log(`Terminal Canvas backend listening on ws://localhost:${PORT} (HTTP POST /usage for usage recording)`);
 
   // Orphan reaper (container mode only).

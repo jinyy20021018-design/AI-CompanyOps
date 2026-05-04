@@ -6,6 +6,7 @@ import type { ServerContext } from "./serverContext.js";
 import { getHoncho, getAgentPeerId, getProjectSessionId, isHonchoAvailable } from "./honchoClient.js";
 import { validateMessage, sanitizeForPty } from "./guardrail.js";
 import { isMessageAllowedByAcl, resolveSenderAuthority } from "./routingAcl.js";
+import { runToolInjection } from "./tools/toolInjectionRunner.js";
 
 /**
  * Create a reusable scratchpad message routing callback.
@@ -19,6 +20,56 @@ export function createScratchpadRouter(
   sharedDir: string,
   folder: { path: string; id: string },
 ): (scratchMsg: ScratchpadMessage) => void {
+  const collectArtifactContext = (msgText: string): string => {
+    const root = path.resolve(folder.path);
+    const candidates = msgText.match(/(?:\/[^\s"'<>]+?\.(?:md|json|yaml|yml|csv|txt))/gi) ?? [];
+    const chunks: string[] = [];
+    for (const candidate of [...new Set(candidates)].slice(0, 8)) {
+      const cleaned = candidate.replace(/[),.;:]+$/, "");
+      const resolved = path.resolve(cleaned);
+      if (resolved !== root && !resolved.startsWith(`${root}${path.sep}`)) continue;
+      try {
+        const stat = fs.statSync(resolved);
+        if (!stat.isFile() || stat.size > 512 * 1024) continue;
+        chunks.push(`\n\n# Artifact: ${resolved}\n${fs.readFileSync(resolved, "utf-8").slice(0, 12000)}`);
+      } catch {}
+    }
+    return chunks.join("");
+  };
+
+  const maybeRunDomainToolInjection = (entry: { sessionName: string; sessionDir?: string }, msg: ScratchpadMessage) => {
+    if (msg.msgType !== "task_assign") return;
+    const sessionName = entry.sessionName.toLowerCase();
+    const target = sessionName === "marketing" ? "market" : sessionName === "finance" ? "finance" : null;
+    if (!target) return;
+
+    console.log(
+      "[tool-injection] scheduling",
+      "target=", target,
+      "session=", entry.sessionName,
+      "mode=", process.env.COAGENT_DOMAIN_AGENTS ?? "legacy",
+      "enabled=", process.env.COAGENT_TOOL_INJECTION_ENABLED ?? "1",
+      "taskId=", msg.taskId ?? "none",
+    );
+
+    const workspaceDir = path.join(folder.path, "CoAgent_workspace");
+    let projectContext = "";
+    try {
+      projectContext = fs.readFileSync(path.join(workspaceDir, "_shared", "context.md"), "utf-8").slice(0, 8000);
+    } catch {}
+    projectContext += collectArtifactContext(msg.msg);
+
+    void runToolInjection({
+      folderPath: folder.path,
+      target,
+      projectContext,
+      taskText: msg.msg,
+      sessionDir: entry.sessionDir,
+    }).catch((err) => {
+      console.warn("[tool-injection] failed:", err instanceof Error ? err.message : String(err));
+    });
+  };
+
   return (scratchMsg: ScratchpadMessage) => {
     // ── Guardrail check ──────────────────────────────────────────────────────
     const guardrail = validateMessage(scratchMsg);
@@ -66,6 +117,8 @@ export function createScratchpadRouter(
         console.warn("[acl] blocked message:", scratchMsg.msgType, "from", scratchMsg.from, "to", entry.sessionName, "-", acl.reason ?? "not allowed");
         continue;
       }
+
+      maybeRunDomainToolInjection(entry, scratchMsg);
 
       // Inbox write — works even without an active PTY
       try {

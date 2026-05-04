@@ -17,6 +17,8 @@ import os from "node:os";
 import { createScratchpadRouter } from "../messageRouting.js";
 import type { ScratchpadMessage } from "../scratchpadWatcher.js";
 
+const OLD_ENV = { ...process.env };
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function makeMsg(overrides: Partial<ScratchpadMessage> = {}): ScratchpadMessage {
@@ -93,6 +95,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  process.env = { ...OLD_ENV };
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
@@ -139,6 +142,27 @@ describe("message routing pipeline — happy path", () => {
     const urgentBroadcasts = (broadcasts as Array<{ type: string }>)
       .filter(b => b.type === "message:urgent");
     expect(urgentBroadcasts).toHaveLength(1);
+  });
+
+  it("triggers hybrid market tool injection for Marketing task_assign without blocking inbox delivery", async () => {
+    process.env.COAGENT_DOMAIN_AGENTS = "hybrid";
+    process.env.COAGENT_DISABLED_TOOLS = "web_search,competitor_page_fetch,world_bank_indicator";
+
+    const marketingDir = path.join(tmpDir, "sessions", "marketing");
+    fs.mkdirSync(marketingDir, { recursive: true });
+    fs.writeFileSync(path.join(marketingDir, "inbox.jsonl"), "");
+
+    const route = makeRouter({ tmpDir, sessionDirs: { marketing: marketingDir, coordinator: coordinatorDir }, broadcasts });
+
+    route(makeMsg({ to: "name:Marketing", msg: "Create GTM for a B2B SaaS analytics product." }));
+
+    expect(readInbox(marketingDir)).toHaveLength(1);
+
+    const evidencePath = path.join(tmpDir, "CoAgent_workspace", "_shared", "artifacts", "market", "market-evidence.json");
+    for (let i = 0; i < 20 && !fs.existsSync(evidencePath); i++) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(fs.existsSync(evidencePath)).toBe(true);
   });
 
   it("delivers a broadcast (*) to all agents except the sender", () => {
