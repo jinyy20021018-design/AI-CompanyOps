@@ -111,6 +111,21 @@ Important environment variables:
 | `COAGENT_HOST_PROJECTS_ROOT` | optional | Host projects directory bind-mounted into orchestrator and agent containers |
 | `COAGENT_HONCHO_DIR` | optional | Path to an existing Honcho checkout |
 
+Optional Marketing / Finance hybrid-agent variables:
+
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `COAGENT_DOMAIN_AGENTS` | optional | `legacy` by default; set `hybrid` to run concurrent external-data injection, or `native` to let the runtime also generate Marketing/Finance markdown artifacts |
+| `COAGENT_TOOL_INJECTION_ENABLED` | optional | `1` by default; set `0` to disable tool injection |
+| `COAGENT_TOOL_INJECTION_CONCURRENCY` | optional | `8` by default; max concurrent tool calls |
+| `COAGENT_TOOL_TIMEOUT_MS` | optional | Override per-tool timeout |
+| `TAVILY_API_KEY` / `BRAVE_SEARCH_API_KEY` | optional | Web search; missing keys skip the matching tool |
+| `FRED_API_KEY` | optional | FRED macro data; missing key skips the tool |
+| `SEC_USER_AGENT` | optional | SEC EDGAR company facts; missing config skips the tool |
+| `ALPHA_VANTAGE_API_KEY` | optional | Alpha Vantage quote data; missing key skips the tool |
+
+Default no-key tools include Frankfurter exchange rates, World Bank indicators, and Jina Reader competitor page fetch. External tools are best-effort: fulfilled results are written to `_shared/artifacts/market/` or `_shared/artifacts/finance/`, while skipped/failed/timeout results are logged to `_shared/source-ledger.jsonl` and never block the existing agent handoff flow. In `hybrid` mode, terminal agents still own the final `gtm.md` and `financial-model.md`; in `native` mode, the backend runtime also writes those markdown artifacts and sends compatible handoffs.
+
 ## Runtime Model
 
 Container mode is the default. `coagent-cli` starts Docker Compose services, waits for PostgreSQL and Redis health checks, runs Honcho migrations, starts Honcho API and Deriver as host `uv` processes, and starts the containerized orchestrator and frontend. The orchestrator then creates one Docker container per agent on demand.

@@ -145,7 +145,7 @@ export class ContainerManager implements AgentChannel {
     onExit: AgentExitListener,
     extraEnv?: Record<string, string>
   ): Promise<AgentSession> {
-    const env = this.buildEnv(extraEnv);
+    const env = this.buildEnv(sessionDir, extraEnv);
     const binds = this.buildBinds();
     await this.removeStoppedContainerWithId(id);
     const labels = {
@@ -527,11 +527,12 @@ export class ContainerManager implements AgentChannel {
     }
   }
 
-  private buildEnv(extraEnv?: Record<string, string>): string[] {
+  private buildEnv(sessionDir: string, extraEnv?: Record<string, string>): string[] {
     const env: Record<string, string> = {
       TERM: "xterm-256color",
       COLUMNS: "80",
       LINES: "24",
+      COAGENT_SESSION_DIR: sessionDir,
       COAGENT_ANTHROPIC_API_KEY: this.opts.anthropicApiKey,
       COAGENT_ORCHESTRATOR_URL: this.opts.orchestratorUrl,
       ...(extraEnv ?? {}),

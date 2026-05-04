@@ -8,6 +8,12 @@ const DEFAULT_STATE_DIR = (process.env.COAGENT_MODE ?? "container") === "contain
   : path.resolve(import.meta.dirname ?? path.dirname(new URL(import.meta.url).pathname), "../../");
 const DATA_FILE = path.join(process.env.COAGENT_STATE_DIR ?? DEFAULT_STATE_DIR, "folders.json");
 
+function defaultProvider(): "claude" | "codex" {
+  if (process.env.COAGENT_DEFAULT_PROVIDER === "codex") return "codex";
+  if (process.env.ANTHROPIC_API_KEY) return "claude";
+  return "claude";
+}
+
 export class FolderRegistry {
   private folders: Map<string, FolderEntry> = new Map();
 
@@ -21,9 +27,15 @@ export class FolderRegistry {
       if (fs.existsSync(DATA_FILE)) {
         const raw = fs.readFileSync(DATA_FILE, "utf-8");
         const entries: FolderEntry[] = JSON.parse(raw);
+        let changed = false;
         for (const entry of entries) {
+          if (entry.defaultProvider === "codex" && defaultProvider() === "claude") {
+            entry.defaultProvider = "claude";
+            changed = true;
+          }
           this.folders.set(entry.id, entry);
         }
+        if (changed) this.save();
       }
     } catch {
       // start with empty list on parse error
@@ -49,7 +61,7 @@ export class FolderRegistry {
         id,
         label: path.basename(resolved),
         path: resolved,
-        defaultProvider: "claude",
+        defaultProvider: defaultProvider(),
       });
       this.save();
     } catch {

@@ -32,7 +32,7 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: postgres
     ports:
-      - "5432:5432"
+      - "${COAGENT_POSTGRES_PORT:-5432}:5432"
     volumes:
       - coagent_postgres_data:/var/lib/postgresql/data
     networks: [coagent_net]
@@ -48,7 +48,7 @@ services:
     container_name: coagent-redis-1
     command: ["redis-server", "--appendonly", "yes"]
     ports:
-      - "6379:6379"
+      - "${COAGENT_REDIS_PORT:-6379}:6379"
     volumes:
       - coagent_redis_data:/data
     networks: [coagent_net]
@@ -125,6 +125,19 @@ services:
       COAGENT_FS_POLLING: "1"
       COAGENT_AGENT_CPUS: "1"
       COAGENT_AGENT_MEMORY_MB: "1024"
+      COAGENT_DOMAIN_AGENTS: ${COAGENT_DOMAIN_AGENTS:-legacy}
+      COAGENT_TOOL_INJECTION_ENABLED: ${COAGENT_TOOL_INJECTION_ENABLED:-1}
+      COAGENT_TOOL_INJECTION_CONCURRENCY: ${COAGENT_TOOL_INJECTION_CONCURRENCY:-8}
+      COAGENT_TOOL_TIMEOUT_MS: ${COAGENT_TOOL_TIMEOUT_MS:-}
+      COAGENT_DISABLED_TOOLS: ${COAGENT_DISABLED_TOOLS:-}
+      WEB_SEARCH_PROVIDER: ${WEB_SEARCH_PROVIDER:-tavily}
+      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+      BRAVE_SEARCH_API_KEY: ${BRAVE_SEARCH_API_KEY:-}
+      COMPETITOR_FETCH_PROVIDER: ${COMPETITOR_FETCH_PROVIDER:-jina}
+      EXCHANGE_RATE_PROVIDER: ${EXCHANGE_RATE_PROVIDER:-frankfurter}
+      FRED_API_KEY: ${FRED_API_KEY:-}
+      SEC_USER_AGENT: ${SEC_USER_AGENT:-}
+      ALPHA_VANTAGE_API_KEY: ${ALPHA_VANTAGE_API_KEY:-}
       HONCHO_BASE_URL: http://host.docker.internal:8000
       HONCHO_API_KEY: local
     volumes:

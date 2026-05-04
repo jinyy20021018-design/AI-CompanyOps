@@ -111,6 +111,21 @@ flowchart LR
 | `COAGENT_HOST_PROJECTS_ROOT` | 可选 | bind mount 到 orchestrator 和 agent containers 的宿主机项目目录 |
 | `COAGENT_HONCHO_DIR` | 可选 | 已存在的 Honcho checkout 路径 |
 
+Marketing / Finance hybrid agent 增强可选环境变量：
+
+| 变量 | 是否需要 | 用途 |
+| --- | --- | --- |
+| `COAGENT_DOMAIN_AGENTS` | 可选 | 默认 `legacy`；设置为 `hybrid` 后并发注入外部工具数据；设置为 `native` 后 runtime 还会生成 Marketing/Finance markdown artifacts |
+| `COAGENT_TOOL_INJECTION_ENABLED` | 可选 | 默认 `1`；设置为 `0` 可关闭工具注入 |
+| `COAGENT_TOOL_INJECTION_CONCURRENCY` | 可选 | 默认 `8`；控制并发工具调用上限 |
+| `COAGENT_TOOL_TIMEOUT_MS` | 可选 | 覆盖单个工具调用 timeout |
+| `TAVILY_API_KEY` / `BRAVE_SEARCH_API_KEY` | 可选 | Web search；缺失时对应工具自动跳过 |
+| `FRED_API_KEY` | 可选 | FRED 宏观经济数据；缺失时自动跳过 |
+| `SEC_USER_AGENT` | 可选 | SEC EDGAR company facts；缺失时自动跳过 |
+| `ALPHA_VANTAGE_API_KEY` | 可选 | Alpha Vantage quote data；缺失时自动跳过 |
+
+无需 API key 的默认工具包括 Frankfurter exchange rate、World Bank indicator 和 Jina Reader competitor page fetch。所有外部工具都是 best-effort：成功结果写入 `_shared/artifacts/market/` 或 `_shared/artifacts/finance/`，失败/跳过/超时写入 `_shared/source-ledger.jsonl`，不会阻塞原有 agent handoff。`hybrid` 模式下终端 agent 仍负责最终 `gtm.md` 和 `financial-model.md`；`native` 模式下 backend runtime 也会写这些 markdown artifacts 并发送兼容 handoff。
+
 ## 运行模型
 
 默认是 container mode。`coagent-cli` 会启动 Docker Compose services，等待 PostgreSQL 和 Redis health checks，通过 `alembic upgrade head` 执行 Honcho migration，使用 host `uv` processes 启动 Honcho API 和 Deriver，并启动 containerized orchestrator 和 frontend。之后 orchestrator 会按需动态创建 agent containers。

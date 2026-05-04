@@ -14,6 +14,8 @@ export function ensureWorkspace(folderPath: string): void {
   fs.mkdirSync(sessions, { recursive: true });
   fs.mkdirSync(memoryDir, { recursive: true });
   fs.mkdirSync(sharedArtifactsDir, { recursive: true });
+  fs.mkdirSync(path.join(sharedArtifactsDir, "market"), { recursive: true });
+  fs.mkdirSync(path.join(sharedArtifactsDir, "finance"), { recursive: true });
 
   // Seed shared.md (team whiteboard)
   const sharedMdFile = path.join(memoryDir, "shared.md");
@@ -44,7 +46,7 @@ export function ensureWorkspace(folderPath: string): void {
   ensureUsageFiles(folderPath);
 
   // Create empty JSONL files if missing
-  for (const name of ["tasks.jsonl", "artifacts.jsonl", "scratchpad.jsonl", "decisions.jsonl", "memory.jsonl"]) {
+  for (const name of ["tasks.jsonl", "artifacts.jsonl", "scratchpad.jsonl", "decisions.jsonl", "memory.jsonl", "source-ledger.jsonl", "agent-events.jsonl"]) {
     const filePath = path.join(shared, name);
     if (!fs.existsSync(filePath)) {
       fs.writeFileSync(filePath, "");
@@ -1254,15 +1256,22 @@ ${commRules}
 ## Your job when you receive a task_assign
 1. Read the Product PRD first (path will be in the task or in your inbox from Product's handoff)
 2. Write the full GTM to \`$COAGENT_SESSION_DIR/artifacts/gtm.md\` (this filename is required — it appears in the Presentation and CEO handoffs)
-3. The **last** major section of \`gtm.md\` MUST be \`## Finance-ready data\` (exact heading). It must be a table with: Quarters covered, Blended CAC target (Y1) if applicable, total paid/performance spend (Y1) by high-level line, and any other figures Finance will need. Add a row \`Data revision: v1\` (increment when you change numbers). If FTE, infra, or launch date numbers depend on Engineering, write **"Pending: Engineering architecture.md for FTE/infra"** in Notes until you can align in chat and update the table to v2+.
-4. **IMMEDIATELY after saving the file**, run ALL of these commands:
+3. **External market data is optional and may be partially available.** Before writing, check:
+\`\`\`bash
+test -f "$COAGENT_SHARED_DIR/artifacts/market/market-evidence.json" && cat "$COAGENT_SHARED_DIR/artifacts/market/market-evidence.json"
+test -f "$COAGENT_SHARED_DIR/artifacts/market/tool-injection-results.json" && cat "$COAGENT_SHARED_DIR/artifacts/market/tool-injection-results.json"
+\`\`\`
+Use fulfilled tool data as supporting evidence. If files are missing, empty, skipped, failed, or timed out, continue anyway and write: "External data unavailable; model uses stated assumptions and conservative estimates." Do NOT ask or block solely because external API data is unavailable.
+4. Include sections \`## Market evidence used\`, \`## Data gaps\`, and \`## Data confidence\`. Every unsupported market number must be labeled as an assumption. Low-confidence market claims must appear in Data gaps.
+5. The **last** major section of \`gtm.md\` MUST be \`## Finance-ready data\` (exact heading). It must be a table with: Quarters covered, Blended CAC target (Y1) if applicable, total paid/performance spend (Y1) by high-level line, and any other figures Finance will need. Add a row \`Data revision: v1\` (increment when you change numbers). If FTE, infra, or launch date numbers depend on Engineering, write **"Pending: Engineering architecture.md for FTE/infra"** in Notes until you can align in chat and update the table to v2+.
+6. **IMMEDIATELY after saving the file**, run ALL of these commands:
 \`\`\`bash
 coagent artifact --type report --path "$COAGENT_SESSION_DIR/artifacts/gtm.md" --desc "Go-to-Market Strategy"
 coagent send --to "role:coordinator" --type handoff --msg "Done: GTM at $COAGENT_SESSION_DIR/artifacts/gtm.md"
 coagent send --to "name:Finance" --type handoff --msg "GTM and budget assumptions ready (preview, CEO Phase 3 task is authoritative): $COAGENT_SESSION_DIR/artifacts/gtm.md"
 \`\`\`
-5. The Finance handoff above is a **preview** — the formal \`task_assign\` for Finance in Phase 3 is the final trigger to treat outputs as complete.
-6. Then enter listen loop:
+7. The Finance handoff above is a **preview** — the formal \`task_assign\` for Finance in Phase 3 is the final trigger to treat outputs as complete.
+8. Then enter listen loop:
 \`\`\`bash
 while true; do coagent inbox; sleep 15; done
 \`\`\`
@@ -1274,6 +1283,9 @@ while true; do coagent inbox; sleep 15; done
 - Launch timeline (pre-launch, launch, post-launch)
 - Budget estimate by channel (with assumptions named)
 - Success metrics (CAC, conversion rates, awareness targets)
+- Market evidence used (fulfilled external data only; cite source URLs when available)
+- Data gaps (skipped/failed/timeout/missing external tools and low-confidence claims)
+- Data confidence (high/medium/low summary)
 - **## Finance-ready data** (required, see above)
 
 ## Fairness review — required before finalizing
@@ -1379,29 +1391,35 @@ You MAY use \`--type question\` to \`name:Engineering\`, \`name:Marketing\`, or 
 coagent send --to "role:coordinator" --type question --msg "Finance: need absolute paths to prd.md, gtm.md, architecture.md, and if available qa-review.md for this run."
 \`\`\`
 2. **Read in order** (or from paths you have): \`ARCHITECTURE\` (\`artifacts/architecture.md\`), \`GTM\` (\`artifacts/gtm.md\` — also read the \`## Finance-ready data\` section), and \`PRD\` as context. Optionally skim \`qa-review.md\` for risk costs.
-3. **Before narrative**, write a section in your output: \`## Stated assumptions (imported)\` — a compact table: source file → key numeric assumptions you will use. Use \`TBD\` for gaps and then send \`question\` messages to fill them:
+3. **External finance/market data is optional and may be partially available.** Before modeling, check:
+\`\`\`bash
+test -f "$COAGENT_SHARED_DIR/artifacts/finance/external-finance-data.json" && cat "$COAGENT_SHARED_DIR/artifacts/finance/external-finance-data.json"
+test -f "$COAGENT_SHARED_DIR/artifacts/market/market-evidence.json" && cat "$COAGENT_SHARED_DIR/artifacts/market/market-evidence.json"
+\`\`\`
+Use only fulfilled tool results as API evidence. Treat skipped/failed/timeout/missing data as Data gaps. Do NOT block or ask questions solely because external API data is unavailable; write: "External data unavailable; model uses stated assumptions and conservative estimates."
+4. **Before narrative**, write a section in your output: \`## Stated assumptions (imported)\` — a compact table: source file → key numeric assumptions you will use. Use \`TBD\` for gaps and then send \`question\` messages to fill them:
 \`\`\`bash
 coagent send --to "name:Engineering" --type question --msg "For financial model, need: team size, sprint count or timeline, and monthly infrastructure cost (from architecture.md or your estimate)."
 coagent send --to "name:Marketing" --type question --msg "For financial model, need: projected quarterly ad/paid spend and target CAC (or confirm Finance-ready data in gtm.md)."
 \`\`\`
 (Only message roles that are missing data — do not spam; merge into one message per role if many fields are empty.)
-4. If \`## Finance-ready data\` in \`gtm.md\` conflicts with **FTE/infra/timeline** in \`architecture.md\`, add \`## Cross-department conflicts\` in your doc: what differs and which you used for the model (or note that the coordinator must decide).
-5. Write the full model to \`$COAGENT_SESSION_DIR/artifacts/financial-model.md\` (filename matches Presentation; **not** budget-analysis.md).
-6. In \`financial-model.md\` include: executive summary, dev cost, marketing by channel/phase, revenue 3-scenario, unit economics, cash/funding, risks/sensitivities, then a short **machine-readable** block at the end:
+5. If \`## Finance-ready data\` in \`gtm.md\` conflicts with **FTE/infra/timeline** in \`architecture.md\`, add \`## Cross-department conflicts\` in your doc: what differs and which you used for the model (or note that the coordinator must decide).
+6. Write the full model to \`$COAGENT_SESSION_DIR/artifacts/financial-model.md\` (filename matches Presentation; **not** budget-analysis.md). Also write optional structured artifacts when possible: \`financial-model.json\`, \`assumptions.yaml\`, and \`sensitivity-analysis.json\`.
+7. In \`financial-model.md\` include: executive summary, dev cost, marketing by channel/phase, revenue 3-scenario, unit economics, cash/funding, risks/sensitivities, **Data gaps**, **Human review required**, then a short **machine-readable** block at the end:
 \`\`\`yaml
 # coagent-finance-summary v1
 currency: USD
 scenarios: { conservative: {}, base: {}, optimistic: {} }
 notes: "use null for unknown; never invent decimals without labeling as illustrative"
 \`\`\`
-7. **IMMEDIATELY after saving**, run:
+8. **IMMEDIATELY after saving**, run:
 \`\`\`bash
 coagent artifact --type report --path "$COAGENT_SESSION_DIR/artifacts/financial-model.md" --desc "Budget & ROI Analysis"
 coagent send --to "role:coordinator" --type handoff --msg "Done: Financial model at $COAGENT_SESSION_DIR/artifacts/financial-model.md"
 \`\`\`
-8. **Optional recall**: \`coagent recall "…"\` may inform assumptions but must not **override** numbers explicitly stated in the task documents unless you say so in Stated assumptions.
+9. **Optional recall**: \`coagent recall "…"\` may inform assumptions but must not **override** numbers explicitly stated in the task documents unless you say so in Stated assumptions.
 
-9. Then enter listen loop:
+10. Then enter listen loop:
 \`\`\`bash
 while true; do coagent inbox; sleep 15; done
 \`\`\`
@@ -1414,6 +1432,8 @@ while true; do coagent inbox; sleep 15; done
 - Unit economics (CAC, LTV, margin analysis)
 - Cash flow timeline & funding requirements
 - Financial risks & sensitivities
+- Data gaps (external tools skipped/failed/timed out, missing documents, low-confidence assumptions)
+- Human review required (high-impact low-confidence assumptions)
 
 ## Fairness review — required before finalizing
 Include a **Fairness Review** section in your artifact with explicit answers to:
