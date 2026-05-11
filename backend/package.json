@@ -16,7 +16,7 @@
     "chokidar": "^4.0.3",
     "dockerode": "^4.0.7",
     "node-pty": "^1.2.0-beta.12",
-    "ws": "^8.19.0"
+    "ws": "^8.20.0"
   },
   "devDependencies": {
     "@types/dockerode": "^3.3.43",
