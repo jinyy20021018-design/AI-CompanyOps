@@ -20,11 +20,11 @@
   },
   "devDependencies": {
     "@types/dockerode": "^3.3.43",
-    "@types/node": "^25.5.0",
+    "@types/node": "^25.8.0",
     "@types/ws": "^8.18.1",
-    "@vitest/coverage-v8": "^4.1.0",
-    "tsx": "^4.21.0",
-    "typescript": "^5.9.3",
-    "vitest": "^4.1.0"
+    "@vitest/coverage-v8": "^4.1.6",
+    "tsx": "^4.22.1",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.6"
   }
 }
